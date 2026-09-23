@@ -118,7 +118,7 @@ export function Toolbar(props: ToolbarProps) {
         <TBtn label="Nuevo mapa (se guarda el actual)" onClick={props.onCreateNew}>
           <FilePlus2 size={16} />
         </TBtn>
-        <TBtn label="Importar (.mm, .json, .opml, .docx)" onClick={props.onImport}>
+        <TBtn label="Importar (.mm, .json, .opml, .md, .txt, .docx)" onClick={props.onImport}>
           <Upload size={16} />
         </TBtn>
         <TBtn label="Buscar (Ctrl+F)" onClick={props.onSearch}>

@@ -1,4 +1,4 @@
-import type { MindNode } from "../types";
+import type { MindNode, NodeMeta } from "../types";
 import { countNodes, createNode, sanitizeNode } from "./tree";
 
 export type ExportFormat = "mm" | "md" | "json" | "opml" | "txt" | "docx";
@@ -20,7 +20,7 @@ export const FORMATS: FormatDef[] = [
   { id: "opml", label: "OPML", ext: ".opml", mime: "text/x-opml", desc: "Estándar de esquemas, compatible con Workflowy, Dynalist u OmniOutliner." },
 ];
 
-export const IMPORT_ACCEPT = ".mm,.json,.opml,.xml,.docx";
+export const IMPORT_ACCEPT = ".mm,.json,.opml,.xml,.docx,.md,.markdown,.txt";
 
 /* ---------------- utilidades ---------------- */
 
@@ -314,16 +314,185 @@ function parseJSON(content: string): { root: MindNode; title?: string } {
   return { root: sanitizeNode(rawRoot), title };
 }
 
+
+interface ImportedOutlineItem {
+  level: number;
+  text: string;
+  notes?: string;
+  meta?: NodeMeta | null;
+}
+
+function stripMarkdownInline(value: string): string {
+  return value
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/(^|\s)[*_]([^*_]+)[*_](?=\s|$)/g, "$1$2")
+    .replace(/\\([\\`*_[\]{}()#+\-.!>])/g, "$1")
+    .trim();
+}
+
+function textIndentLevel(raw: string): number {
+  let units = 0;
+  for (const ch of raw) {
+    if (ch === "\t") units += 2;
+    else if (ch === " ") units += 1;
+    else break;
+  }
+  return Math.floor(units / 2);
+}
+
+function buildImportedTree(items: ImportedOutlineItem[], fallbackTitle: string): MindNode {
+  const container = createNode(fallbackTitle || "Documento importado");
+  const stack: Array<{ level: number; node: MindNode }> = [{ level: -1, node: container }];
+
+  for (const item of items) {
+    const text = item.text.trim();
+    if (!text) continue;
+    const level = Math.max(0, Math.min(32, Math.round(item.level)));
+    while (stack.length > 1 && stack[stack.length - 1].level >= level) stack.pop();
+    const parent = stack[stack.length - 1]?.node ?? container;
+    const node = createNode(text, {
+      notes: item.notes ?? "",
+      meta: item.meta ?? null,
+    });
+    parent.children.push(node);
+    stack.push({ level, node });
+  }
+
+  if (container.children.length === 1) return container.children[0];
+  return container;
+}
+
+function appendNote(items: ImportedOutlineItem[], note: string) {
+  const text = stripMarkdownInline(note).trim();
+  if (!text || items.length === 0) return;
+  const last = items[items.length - 1];
+  last.notes = last.notes ? `${last.notes}\n${text}` : text;
+}
+
+function parseMarkdown(content: string, fallbackTitle = "Documento Markdown"): { root: MindNode; title?: string } {
+  const items: ImportedOutlineItem[] = [];
+  let inFence = false;
+  let inFrontmatter = false;
+  let firstContentLine = true;
+  let lastHeadingLevel: number | null = null;
+  let title: string | undefined;
+
+  for (const raw of content.split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (firstContentLine && trimmed === "---") {
+      inFrontmatter = true;
+      firstContentLine = false;
+      continue;
+    }
+    firstContentLine = firstContentLine && !trimmed;
+    if (inFrontmatter) {
+      if (trimmed === "---") inFrontmatter = false;
+      continue;
+    }
+    if (/^```|^~~~/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || !trimmed) continue;
+
+    const heading = trimmed.match(/^(#{1,6})\s+(.+?)\s*#*$/);
+    if (heading) {
+      const level = heading[1].length - 1;
+      const text = stripMarkdownInline(heading[2]);
+      if (!title && level === 0) title = text;
+      items.push({ level, text });
+      lastHeadingLevel = level;
+      continue;
+    }
+
+    const quote = trimmed.match(/^>\s?(.*)$/);
+    if (quote) {
+      appendNote(items, quote[1]);
+      continue;
+    }
+
+    const list = raw.match(/^(\s*)(?:[-*+] |\d{1,3}[.)] )(.*)$/);
+    if (list) {
+      let text = list[2].trim();
+      let meta: NodeMeta | null = null;
+      const task = text.match(/^\[([ xX])\]\s+(.*)$/);
+      if (task) {
+        meta = { taskDone: task[1].toLowerCase() === "x" };
+        text = task[2].trim();
+      }
+      const base = lastHeadingLevel === null ? 0 : lastHeadingLevel + 1;
+      items.push({
+        level: base + textIndentLevel(list[1]),
+        text: stripMarkdownInline(text),
+        meta,
+      });
+      continue;
+    }
+
+    // Párrafos sueltos: se guardan como notas del último encabezado/nodo para no romper la jerarquía.
+    appendNote(items, trimmed);
+  }
+
+  if (items.length === 0) return parseTextOutline(content, fallbackTitle);
+  const root = sanitizeNode(buildImportedTree(items, title ?? fallbackTitle));
+  return { root, title };
+}
+
+function parseTextOutline(content: string, fallbackTitle = "Documento de texto"): { root: MindNode; title?: string } {
+  const items: ImportedOutlineItem[] = [];
+  for (const raw of content.split(/\r?\n/)) {
+    if (!raw.trim()) continue;
+    const trimmed = raw.trim();
+    if (/^—\s+\d+\s+nodos?\s+·\s+exportado desde Noditos/i.test(trimmed)) continue;
+
+    if (/^(Meta|Metadatos):\s*/i.test(trimmed)) continue;
+    const note = trimmed.match(/^Nota:\s*(.*)$/i);
+    if (note) {
+      appendNote(items, note[1]);
+      continue;
+    }
+
+    const tree = raw.match(/^([\s│]*)(?:[├└]─\s*)(.+)$/);
+    if (tree) {
+      const prefix = tree[1].replace(/\t/g, "  ");
+      const level = Math.floor(prefix.length / 3) + 1;
+      items.push({ level, text: stripMarkdownInline(tree[2]) });
+      continue;
+    }
+
+    const bullet = raw.match(/^(\s*)(?:[-*+•◦▪▫]|\d{1,3}[.)])\s+(.*)$/);
+    if (bullet) {
+      items.push({ level: textIndentLevel(bullet[1]), text: stripMarkdownInline(bullet[2]) });
+      continue;
+    }
+
+    const level = textIndentLevel(raw);
+    items.push({ level, text: stripMarkdownInline(trimmed) });
+  }
+
+  if (items.length === 0) throw new Error("El texto no contiene líneas importables.");
+  const root = sanitizeNode(buildImportedTree(items, fallbackTitle));
+  return { root, title: root.text.trim() || undefined };
+}
+
 export function parseFile(filename: string, content: string): { root: MindNode; title?: string } {
   const name = filename.toLowerCase();
+  const fallbackTitle = filename.replace(/\.[^.]+$/, "");
   if (name.endsWith(".json")) return parseJSON(content);
   if (name.endsWith(".opml")) return parseOPML(content);
   if (name.endsWith(".mm") || name.endsWith(".xml")) return parseMM(content);
+  if (name.endsWith(".md") || name.endsWith(".markdown")) return parseMarkdown(content, fallbackTitle);
+  if (name.endsWith(".txt")) return parseTextOutline(content, fallbackTitle);
   const t = content.trim();
   if (t.startsWith("{")) return parseJSON(content);
   if (/<opml/i.test(t)) return parseOPML(content);
   if (/<map/i.test(t)) return parseMM(content);
-  throw new Error("Formato no reconocido. Usá archivos .mm, .json, .opml o .docx.");
+  if (/^#{1,6}\s+/m.test(t)) return parseMarkdown(content, fallbackTitle);
+  throw new Error("Formato no reconocido. Usá archivos .mm, .json, .opml, .md, .txt o .docx.");
 }
 
 /* ---------------- importación de Word ---------------- */

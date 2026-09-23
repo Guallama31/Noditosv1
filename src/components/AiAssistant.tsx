@@ -36,6 +36,7 @@ import {
   parseSuggestionList,
   PROVIDERS,
 } from "../lib/ai";
+import { parseStructuredActionReply, type AiMapAction } from "../lib/aiActions";
 import { copyText } from "../lib/formats";
 import { countNodes, createNode, findNode, sanitizeNode } from "../lib/tree";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -220,88 +221,6 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
 
     const result = deduped.join(" ").trim();
     return result || normalized;
-  };
-
-  type AiMapAction =
-    | { type: "updateText"; nodeId?: string; text: string }
-    | { type: "addChild"; parentId?: string; text: string }
-    | { type: "addChildren"; parentId?: string; texts: string[] }
-    | { type: "updateNotes"; nodeId?: string; notes: string }
-    | { type: "deleteNode"; nodeId: string }
-    | { type: "reorderChildren"; parentId: string; orderedIds: string[] }
-    | { type: "moveNode"; nodeId: string; targetId: string }
-    | { type: "toggleCollapse"; nodeId: string };
-
-  const parseStructuredActionReply = (raw: string): AiMapAction[] | null => {
-    const text = (raw ?? "").trim();
-    if (!text) return null;
-
-    const candidates: string[] = [];
-    const stripped = text
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/```\s*$/i, "")
-      .trim();
-    candidates.push(stripped);
-
-    const jsonLike = stripped.match(/\{[\s\S]*\}/);
-    if (jsonLike) candidates.push(jsonLike[0]);
-    const arrayLike = stripped.match(/\[[\s\S]*\]/);
-    if (arrayLike) candidates.push(arrayLike[0]);
-
-    for (const candidate of candidates) {
-      try {
-        const parsed = JSON.parse(candidate);
-        const actions = Array.isArray(parsed)
-          ? parsed
-          : Array.isArray(parsed?.actions)
-            ? parsed.actions
-            : parsed && typeof parsed === "object" && (parsed as any).type
-              ? [parsed]
-              : null;
-
-        if (!actions) continue;
-        const normalized = actions
-          .map((entry: any) => {
-            const type = String(entry?.type ?? "").trim().toLowerCase();
-            if (!type) return null;
-
-            if (type === "updateText") {
-              return { type: "updateText", nodeId: entry.nodeId, text: String(entry.text ?? "") };
-            }
-            if (type === "addChild") {
-              return { type: "addChild", parentId: entry.parentId, text: String(entry.text ?? "") };
-            }
-            if (type === "addChildren") {
-              const texts = Array.isArray(entry.texts) ? entry.texts.map((v: unknown) => String(v)) : [];
-              return { type: "addChildren", parentId: entry.parentId, texts };
-            }
-            if (type === "updateNotes") {
-              return { type: "updateNotes", nodeId: entry.nodeId, notes: String(entry.notes ?? "") };
-            }
-            if (type === "deleteNode") {
-              return { type: "deleteNode", nodeId: String(entry.nodeId ?? "") };
-            }
-            if (type === "reorderChildren") {
-              const orderedIds = Array.isArray(entry.orderedIds) ? entry.orderedIds.map((v: unknown) => String(v)) : [];
-              return { type: "reorderChildren", parentId: String(entry.parentId ?? ""), orderedIds };
-            }
-            if (type === "moveNode") {
-              return { type: "moveNode", nodeId: String(entry.nodeId ?? ""), targetId: String(entry.targetId ?? "") };
-            }
-            if (type === "toggleCollapse") {
-              return { type: "toggleCollapse", nodeId: String(entry.nodeId ?? "") };
-            }
-            return null;
-          })
-          .filter((v: AiMapAction | null): v is AiMapAction => Boolean(v));
-
-        if (normalized.length) return normalized;
-      } catch {
-        // intentar siguiente candidato
-      }
-    }
-
-    return null;
   };
 
   const normalizeMapRef = (value?: string): string | undefined => {
