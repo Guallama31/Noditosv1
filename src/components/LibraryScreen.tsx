@@ -429,9 +429,8 @@ export function LibraryScreen({
         <footer className="card-in mt-16 pb-2 text-center" style={{ animationDelay: "220ms" }}>
           <div className="mx-auto mb-4 h-px w-14 bg-ink-300/40" />
           <p className="font-display text-[15px] font-bold tracking-tight text-ink-500">
-            Hecho por <span className="text-ink-700">JM</span>
+            Equipo <span className="text-ink-700">Noditos</span>
           </p>
-          <p className="mt-1.5 text-[10px] font-semibold uppercase tracking-[0.3em] text-[#c7c4bb]">Using Qwen</p>
         </footer>
       </div>
 
