@@ -12,6 +12,11 @@ on:
         description: "Commitear release/Noditos.exe en la rama"
         type: boolean
         default: true
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "README**"
+      - "**.md"
 
 permissions:
   contents: write
