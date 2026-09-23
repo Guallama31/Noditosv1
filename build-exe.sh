@@ -50,11 +50,15 @@ else
           let d='';
           process.stdin.on('data',c=>d+=c).on('end',()=>{
             try{
+              let supported = [];
+              try {
+                supported = Object.keys(require('$PROJ/node_modules/@yao-pkg/pkg-fetch/patches/patches.json')).map(v => v.replace(/^v/, ''));
+              } catch(e) {}
               const assets=JSON.parse(d);
               const re=new RegExp('^node-v(\\\\d+\\\\.\\\\d+\\\\.\\\\d+)-$PKG_PLATFORM-x64\$');
               const vs=assets
                 .map(a=>{const m=a.name.match(re);return m?m[1]:null})
-                .filter(Boolean)
+                .filter(v => v && (supported.length === 0 || supported.includes(v)))
                 .sort((a,b)=>b.localeCompare(a,undefined,{numeric:true}));
               console.log(vs.join(' '));
             }catch(e){}

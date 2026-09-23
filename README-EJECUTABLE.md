@@ -48,6 +48,13 @@ No. Son avisos de dependencias transitivas del empaquetador; no afectan la
 compilación ni se incluyen en el `.exe`. El de `esbuild` (npm 11 bloquea su
 script de instalación) ya lo resuelve el script con `npm rebuild esbuild`.
 
+**Al compilar aparece `Error: EPERM: operation not permitted, unlink ... Noditos.exe`**
+Significa que `Noditos.exe` estaba abierto o corriendo en segundo plano en Windows,
+lo que impide sobrescribir el archivo. Para resolverlo:
+1. Abrí el Administrador de tareas (`Ctrl + Shift + Esc`).
+2. Finalizá el proceso `Noditos.exe` (o ejecutá en CMD: `taskkill /F /IM Noditos.exe`).
+3. Volvé a ejecutar `build-exe.bat`.
+
 **¿Dónde viven los mapas del usuario?**
 En el navegador de cada usuario (localStorage). Para compartir trabajo entre
 PCs se usa Exportar/Importar (el `.json` conserva absolutamente todo).

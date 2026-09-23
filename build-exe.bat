@@ -24,6 +24,32 @@ if errorlevel 1 goto error
 echo.
 
 echo  [3/4] Preparando carpeta de empaquetado limpia...
+:: Si Noditos.exe ya existe en release, verificamos que no esté en ejecución/bloqueado.
+if not exist "%PROJ%release" mkdir "%PROJ%release"
+if exist "%PROJ%release\Noditos.exe" (
+  taskkill /F /IM Noditos.exe >nul 2>&1
+  timeout /t 1 /nobreak >nul 2>&1
+  del /f /q "%PROJ%release\Noditos.exe" >nul 2>&1
+  if exist "%PROJ%release\Noditos.exe" (
+    echo.
+    echo  ==============================================================
+    echo  [ERROR] No se pudo sobrescribir "%PROJ%release\Noditos.exe"
+    echo  ==============================================================
+    echo.
+    echo  El archivo esta bloqueado porque Noditos.exe sigue en ejecucion
+    echo  en segundo plano o abierto por otro programa.
+    echo.
+    echo  Para solucionarlo:
+    echo    1. Abre el Administrador de Tareas (Ctrl + Shift + Esc).
+    echo    2. En la pestana "Procesos", busca "Noditos.exe".
+    echo    3. Haz clic derecho y elige "Finalizar tarea".
+    echo    4. Vuelve a ejecutar build-exe.bat.
+    echo.
+    pause
+    exit /b 1
+  )
+)
+
 :: Se empaqueta desde una ruta sin espacios ni parentesis: pkg usa globs
 :: y ciertos caracteres en la ruta rompen la incrustacion de dist/.
 if exist "%STAGE%" rmdir /s /q "%STAGE%"
@@ -60,6 +86,7 @@ if defined SUCCESS goto success
 goto allfailed
 
 :try_pkg
+if defined SUCCESS exit /b 0
 echo   Probando con el binario node%1-win-x64...
 node "%PROJ%node_modules\@yao-pkg\pkg\lib-es5\bin.js" server.cjs --targets node%1-win-x64 --config pkg.json --output "%PROJ%release\Noditos.exe"
 if not errorlevel 1 set "SUCCESS=%1"
