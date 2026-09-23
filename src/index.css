@@ -10,13 +10,13 @@
   --color-ink-700: #5e5e6e;
   --color-ink-600: #75757f;
   --color-ink-500: #8f8f96;
-  --color-ink-400: #aba8a7;
-  --color-ink-300: #c6c3c0;
-  --color-ink-200: #ddd9d4;
-  --color-ink-100: #ece9e4;
-  --color-ink-50: #f5f3ef;
+  --color-ink-400: #a9a9b1;
+  --color-ink-300: #c8c8cf;
+  --color-ink-200: #e0e0e6;
+  --color-ink-100: #ececf0;
+  --color-ink-50: #f5f5f7;
 
-  --color-paper: #f2f0ec;
+  --color-paper: #f4f4f6;
   --color-brand: #b54a33;
   --color-brand-soft: #e8b7ab;
   --color-teal-brand: #0f9d8a;
@@ -59,18 +59,43 @@ html {
   background: rgba(181, 74, 51, 0.28);
 }
 
-/* ---------- canvas ---------- */
-.canvas-dots {
-  background-color: #f2f0ec;
+/* ---------- fondo geométrico ultra sutil ----------
+   Base gris casi blanca + retícula de líneas finísimas (96px) y
+   una malla de puntos mínima (32px). Contraste muy bajo, aspecto
+   profesional y espacioso. */
+:root {
+  --bg-base: #f4f4f6;
+  --bg-line: rgba(23, 23, 32, 0.035);
+  --bg-line-strong: rgba(23, 23, 32, 0.05);
+  --bg-dot: rgba(23, 23, 32, 0.07);
+  --bg-grid: 96px;
+  --bg-dots: 32px;
+}
+
+.canvas-dots,
+.app-surface {
+  background-color: var(--bg-base);
   background-image:
-    radial-gradient(rgba(94, 94, 110, 0.26) 1.1px, transparent 1.1px),
-    radial-gradient(rgba(105, 99, 77, 0.12) 1.1px, transparent 1.1px);
+    /* puntos mínimos */
+    radial-gradient(var(--bg-dot) 1px, transparent 1px),
+    /* líneas finas verticales */
+    linear-gradient(to right, var(--bg-line) 1px, transparent 1px),
+    /* líneas finas horizontales */
+    linear-gradient(to bottom, var(--bg-line) 1px, transparent 1px);
   background-size:
-    28px 28px,
-    28px 28px;
+    var(--bg-dots) var(--bg-dots),
+    var(--bg-grid) var(--bg-grid),
+    var(--bg-grid) var(--bg-grid);
   background-position:
     0 0,
-    14px 14px;
+    0 0,
+    0 0;
+}
+
+/* Variante para vistas con scroll (biblioteca, ajustes): la retícula
+   se ancla al viewport para que no “viaje” con el contenido. */
+.app-surface--fixed {
+  background-attachment: fixed, fixed, fixed;
 }
 
 .canvas-anim {
@@ -82,7 +107,8 @@ html {
 .wash {
   position: absolute;
   border-radius: 9999px;
-  filter: blur(70px);
+  filter: blur(90px);
+  opacity: 0.55;
   pointer-events: none;
   will-change: transform;
 }
