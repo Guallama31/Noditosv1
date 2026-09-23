@@ -1,7 +1,0 @@
-{
-  "pkg": {
-    "assets": ["dist/**/*"],
-    "targets": ["node20-win-x64"],
-    "outputPath": "release"
-  }
-}

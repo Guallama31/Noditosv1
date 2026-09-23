@@ -16,6 +16,10 @@ Programa para organizar ideas con mapas mentales, biblioteca local e importació
 - Enlaces compartibles con el mapa embebido para mapas livianos.
 - Ayudante IA opcional con claves guardables localmente o solo por sesión.
 
+## Ejecutable para usuarios finales
+
+Ver **[README-EJECUTABLE.md](README-EJECUTABLE.md)**: `release/Noditos.exe` ya viene compilado en el repo — doble clic y la app se abre en el navegador.
+
 ## Desarrollo
 
 ```bash
