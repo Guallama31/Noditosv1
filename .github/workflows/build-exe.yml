@@ -75,11 +75,20 @@ jobs:
           Write-Host "Tamano: $size bytes"
           if ($size -lt 20MB) { throw "Demasiado pequeno ($size): dist/ probablemente no se incrusto" }
 
-          # Contenido incrustado: token del boton Detener, assets y cambios recientes
+          # Contenido incrustado:
+          # 1) el placeholder del token del boton "Detener", y
+          # 2) los nombres de assets CON HASH de este dist/ recien compilado.
+          #    Si el exe tuviera un dist viejo, los hashes no coincidirian.
           $ascii = [System.IO.File]::ReadAllText($exe, [System.Text.Encoding]::Latin1)
-          foreach ($needle in @("__NODITOS_STOP_TOKEN__", "assets/index", "Equipo Noditos")) {
-            if (-not $ascii.Contains($needle)) { throw "El exe no contiene '$needle'" }
-            Write-Host "OK: contiene '$needle'"
+          if (-not $ascii.Contains("__NODITOS_STOP_TOKEN__")) { throw "El exe no contiene el token del boton Detener" }
+          Write-Host "OK: contiene el token del boton Detener"
+
+          $html = Get-Content dist/index.html -Raw
+          $assets = [regex]::Matches($html, 'assets/[A-Za-z0-9._-]+') | ForEach-Object { $_.Value } | Sort-Object -Unique
+          if (!$assets) { throw "No se encontraron assets en dist/index.html" }
+          foreach ($asset in $assets) {
+            if (-not $ascii.Contains($asset)) { throw "El exe no contiene '$asset' (dist desactualizado o no incrustado)" }
+            Write-Host "OK: contiene $asset"
           }
 
           Write-Host "SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
