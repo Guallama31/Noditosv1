@@ -175,6 +175,18 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
                   {showKey ? "Ocultar" : "Mostrar"}
                 </button>
               </div>
+              <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-[#c08a2e]/25 bg-[#c08a2e]/8 px-3 py-2 text-[12px] leading-snug text-ink-600">
+                <input
+                  type="checkbox"
+                  checked={cfg.saveApiKey}
+                  onChange={(e) => setCfg((c) => ({ ...c, saveApiKey: e.target.checked }))}
+                  className="mt-0.5 h-3.5 w-3.5 accent-[#b54a33]"
+                />
+                <span>
+                  <strong>Recordar clave en este navegador.</strong>{" "}
+                  Si lo desactivás, la clave solo se conserva hasta cerrar esta pestaña y no queda en localStorage.
+                </span>
+              </label>
               {provider.keyUrl && (
                 <a
                   href={provider.keyUrl}
@@ -311,8 +323,8 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
         </div>
 
         <p className="card-in mt-4 text-center text-[11.5px] text-ink-400" style={{ animationDelay: "200ms" }}>
-          La clave se guarda únicamente en este navegador (localStorage) y nunca se envía a otro
-          lugar que no sea el proveedor elegido.
+          Las claves nunca se imprimen en logs de Noditos. Si elegís recordarlas, quedan en localStorage;
+          si no, se guardan temporalmente en sessionStorage y se pierden al cerrar la pestaña.
         </p>
 
         {configured && (

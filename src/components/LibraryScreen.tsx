@@ -2,15 +2,17 @@ import { useRef } from "react";
 import {
   ArrowUpRight,
   Copy,
+  Download,
   FilePlus2,
   LayoutTemplate,
   Network,
   Power,
+  RotateCcw,
   Sparkles,
   Trash2,
   Upload,
 } from "lucide-react";
-import type { StoredMap } from "../lib/library";
+import type { StoredMap, TrashedMap } from "../lib/library";
 import { buildPreview, timeAgo } from "../lib/library";
 import { countNodes, maxDepth } from "../lib/tree";
 import { isAiConfigured, loadAiConfig, PROVIDERS } from "../lib/ai";
@@ -178,6 +180,7 @@ function AiSettingsButton({ onOpen }: { onOpen: () => void }) {
 
 export function LibraryScreen({
   maps,
+  trash,
   onOpen,
   onCreate,
   onLoadSample,
@@ -185,6 +188,10 @@ export function LibraryScreen({
   onDelete,
   onRename,
   onImportFile,
+  onExportBackup,
+  onImportBackup,
+  onRestoreTrash,
+  onEmptyTrash,
   onOpenTemplates,
   onOpenAiSettings,
   canStop,
@@ -192,6 +199,7 @@ export function LibraryScreen({
   onRequestStop,
 }: {
   maps: StoredMap[];
+  trash: TrashedMap[];
   onOpen: (id: string) => void;
   onCreate: () => void;
   onLoadSample: () => void;
@@ -199,6 +207,10 @@ export function LibraryScreen({
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onImportFile: (file: File) => void;
+  onExportBackup: () => void;
+  onImportBackup: (file: File) => void;
+  onRestoreTrash: (id: string) => void;
+  onEmptyTrash: () => void;
   onOpenTemplates: () => void;
   onOpenAiSettings: () => void;
   canStop: boolean;
@@ -206,6 +218,7 @@ export function LibraryScreen({
   onRequestStop: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const backupRef = useRef<HTMLInputElement>(null);
   const sorted = [...maps].sort((a, b) => b.updatedAt - a.updatedAt);
   const totalNodes = maps.reduce((acc, m) => acc + countNodes(m.root), 0);
 
@@ -229,13 +242,27 @@ export function LibraryScreen({
 
             {/* acciones + Ayudante IA debajo, alineados a la derecha */}
             <div className="flex flex-col items-stretch gap-2.5">
-              <div className="flex items-center justify-end gap-2.5">
+              <div className="flex flex-wrap items-center justify-end gap-2.5">
                 <button
                   onClick={() => fileRef.current?.click()}
                   className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3.5 py-2.5 text-[13px] font-semibold text-ink-600 shadow-sm transition hover:border-ink-300 hover:bg-ink-50 active:translate-y-px"
                 >
                   <Upload size={15} />
-                  Importar
+                  Importar mapa
+                </button>
+                <button
+                  onClick={onExportBackup}
+                  className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3.5 py-2.5 text-[13px] font-semibold text-ink-600 shadow-sm transition hover:border-ink-300 hover:bg-ink-50 active:translate-y-px"
+                >
+                  <Download size={15} />
+                  Backup
+                </button>
+                <button
+                  onClick={() => backupRef.current?.click()}
+                  className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3.5 py-2.5 text-[13px] font-semibold text-ink-600 shadow-sm transition hover:border-ink-300 hover:bg-ink-50 active:translate-y-px"
+                >
+                  <Upload size={15} />
+                  Restaurar
                 </button>
                 <button
                   onClick={onOpenTemplates}
@@ -359,6 +386,45 @@ export function LibraryScreen({
           </div>
         )}
 
+        {trash.length > 0 && (
+          <section className="card-in mt-10 rounded-2xl border border-ink-200 bg-white/85 p-5 shadow-sm" style={{ animationDelay: "180ms" }}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="font-display text-[18px] font-bold text-ink-900">Papelera</h2>
+                <p className="mt-1 text-[12.5px] text-ink-500">
+                  Los mapas eliminados quedan acá para que puedas restaurarlos antes de vaciarla.
+                </p>
+              </div>
+              <button
+                onClick={onEmptyTrash}
+                className="flex items-center gap-1.5 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-[12px] font-bold text-danger transition hover:bg-danger/10"
+              >
+                <Trash2 size={14} />
+                Vaciar papelera
+              </button>
+            </div>
+            <div className="mt-4 divide-y divide-ink-100 overflow-hidden rounded-xl border border-ink-100 bg-white">
+              {trash.map((m) => (
+                <div key={m.id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-bold text-ink-800">{m.title}</p>
+                    <p className="text-[11px] font-medium text-ink-400">
+                      {countNodes(m.root)} nodos · eliminado {timeAgo(m.deletedAt)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => onRestoreTrash(m.id)}
+                    className="flex items-center gap-1.5 rounded-lg border border-ink-200 bg-ink-50 px-3 py-1.5 text-[11.5px] font-bold text-ink-600 transition hover:bg-white hover:text-ink-800"
+                  >
+                    <RotateCcw size={13} />
+                    Restaurar
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         <footer className="card-in mt-16 pb-2 text-center" style={{ animationDelay: "220ms" }}>
           <div className="mx-auto mb-4 h-px w-14 bg-ink-300/40" />
           <p className="font-display text-[15px] font-bold tracking-tight text-ink-500">
@@ -377,6 +443,17 @@ export function LibraryScreen({
           const file = e.target.files?.[0];
           e.target.value = "";
           if (file) onImportFile(file);
+        }}
+      />
+      <input
+        ref={backupRef}
+        type="file"
+        accept=".json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) onImportBackup(file);
         }}
       />
     </div>

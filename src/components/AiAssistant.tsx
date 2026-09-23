@@ -272,7 +272,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
               return { type: "addChild", parentId: entry.parentId, text: String(entry.text ?? "") };
             }
             if (type === "addChildren") {
-              const texts = Array.isArray(entry.texts) ? entry.texts.map((v) => String(v)) : [];
+              const texts = Array.isArray(entry.texts) ? entry.texts.map((v: unknown) => String(v)) : [];
               return { type: "addChildren", parentId: entry.parentId, texts };
             }
             if (type === "updateNotes") {
@@ -282,7 +282,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
               return { type: "deleteNode", nodeId: String(entry.nodeId ?? "") };
             }
             if (type === "reorderChildren") {
-              const orderedIds = Array.isArray(entry.orderedIds) ? entry.orderedIds.map((v) => String(v)) : [];
+              const orderedIds = Array.isArray(entry.orderedIds) ? entry.orderedIds.map((v: unknown) => String(v)) : [];
               return { type: "reorderChildren", parentId: String(entry.parentId ?? ""), orderedIds };
             }
             if (type === "moveNode") {
@@ -293,7 +293,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
             }
             return null;
           })
-          .filter((v): v is AiMapAction => Boolean(v));
+          .filter((v: AiMapAction | null): v is AiMapAction => Boolean(v));
 
         if (normalized.length) return normalized;
       } catch {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Network, RefreshCw } from "lucide-react";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import type { MapSnapshot, ToastItem, ToastKind } from "./types";
@@ -8,17 +8,25 @@ import { AiSettingsScreen } from "./components/AiSettingsScreen";
 import { TemplatesModal } from "./components/TemplatesModal";
 import { ConfirmModal } from "./components/Modals";
 import { Toasts } from "./components/Toasts";
-import type { TemplateDef } from "./lib/templates";
+import type { MapTemplate } from "./lib/templates";
 import { parseAnyFile } from "./lib/formats";
 import { countNodes } from "./lib/tree";
 import { sampleMap } from "./lib/sample";
 import {
+  createLibraryBackup,
   createStoredMap,
-  loadLibraryData,
+  mergeLibraryData,
+  maybeCreateAutoVersion,
+  moveMapToTrash,
+  parseLibraryBackup,
+  restoreFromTrash,
   saveLibraryData,
+  loadLibraryData,
   type LibraryDataShape,
   type StoredMap,
 } from "./lib/library";
+import { download } from "./lib/formats";
+import { clearShareHash, parseShareHash } from "./lib/share";
 
 type ConfirmState = { kind: "delete"; map: StoredMap } | { kind: "stop" } | null;
 
@@ -65,7 +73,16 @@ function CrashScreen({ error }: { error: Error }) {
 
 function AppInner() {
   /* ---------- biblioteca ---------- */
-  const [data, setData] = useState<LibraryDataShape>(loadLibraryData);
+  const [data, setData] = useState<LibraryDataShape>(() => {
+    const loaded = loadLibraryData();
+    const shared = parseShareHash();
+    if (!shared) return loaded;
+    const map = createStoredMap(shared.title, shared.root);
+    const next = { ...loaded, maps: [map, ...loaded.maps], lastOpenedId: map.id };
+    saveLibraryData(next);
+    clearShareHash();
+    return next;
+  });
   const dataRef = useRef(data);
   dataRef.current = data;
 
@@ -82,7 +99,7 @@ function AppInner() {
 
   const upsertMap = useCallback(
     (id: string, snap: MapSnapshot) => {
-      const d = dataRef.current;
+      const d = maybeCreateAutoVersion(dataRef.current, id);
       const maps = d.maps.map((m) =>
         m.id === id ? { ...m, ...snap, updatedAt: Date.now() } : m,
       );
@@ -99,6 +116,15 @@ function AppInner() {
     setToasts((t) => [...t.slice(-2), { id, kind, message }]);
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3400);
   }, []);
+
+  useEffect(() => {
+    const onWarning = (event: Event) => {
+      const detail = (event as CustomEvent<string>).detail;
+      notify(detail || "Revisá el almacenamiento local de Noditos", "error");
+    };
+    window.addEventListener("noditos-storage-warning", onWarning);
+    return () => window.removeEventListener("noditos-storage-warning", onWarning);
+  }, [notify]);
 
   /* ---------- detener el servidor (Noditos.exe) ---------- */
   const stopToken = useMemo(readStopToken, []);
@@ -164,13 +190,8 @@ function AppInner() {
 
   const handleDeleteConfirmed = useCallback(() => {
     if (confirm?.kind !== "delete") return;
-    const id = confirm.map.id;
-    persist({
-      ...dataRef.current,
-      maps: dataRef.current.maps.filter((m) => m.id !== id),
-      lastOpenedId: dataRef.current.lastOpenedId === id ? null : dataRef.current.lastOpenedId,
-    });
-    notify("Mapa eliminado de tu biblioteca", "info");
+    persist(moveMapToTrash(dataRef.current, confirm.map.id));
+    notify("Mapa enviado a la papelera. Podés restaurarlo desde la biblioteca.", "info");
   }, [confirm, persist, notify]);
 
   const handleRename = useCallback(
@@ -199,12 +220,45 @@ function AppInner() {
   }, [createAndOpen]);
 
   const handleUseTemplate = useCallback(
-    (t: TemplateDef) => {
+    (t: MapTemplate) => {
       setShowTemplates(false);
-      createAndOpen(createStoredMap(t.name, t.build()), `Plantilla «${t.name}» creada`);
+      createAndOpen(createStoredMap(t.title, t.build()), `Plantilla «${t.name}» creada`);
     },
     [createAndOpen],
   );
+
+  const handleExportBackup = useCallback(() => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    download(`noditos-backup-${stamp}.json`, createLibraryBackup(dataRef.current), "application/json");
+    notify("Backup completo exportado");
+  }, [notify]);
+
+  const handleImportBackup = useCallback(
+    async (file: File) => {
+      try {
+        const incoming = parseLibraryBackup(await file.text());
+        const merged = mergeLibraryData(dataRef.current, incoming);
+        persist(merged);
+        notify(`Backup importado: ${incoming.maps.length} mapa${incoming.maps.length === 1 ? "" : "s"}`);
+      } catch (err) {
+        notify(err instanceof Error ? err.message : "No se pudo importar el backup", "error");
+      }
+    },
+    [persist, notify],
+  );
+
+  const handleRestoreTrash = useCallback(
+    (id: string) => {
+      persist(restoreFromTrash(dataRef.current, id));
+      notify("Mapa restaurado desde la papelera");
+    },
+    [persist, notify],
+  );
+
+  const handleEmptyTrash = useCallback(() => {
+    persist({ ...dataRef.current, trash: [] });
+    notify("Papelera vaciada", "info");
+  }, [persist, notify]);
 
   const openMapEntry = openMapId ? data.maps.find((m) => m.id === openMapId) : null;
 
@@ -221,6 +275,7 @@ function AppInner() {
           onCreateNew={handleCreateNew}
           onOpenAiSettings={openAiSettings}
           notify={notify}
+          versions={(data.versions ?? []).filter((v) => v.mapId === openMapEntry.id)}
           flushRef={flushRef}
           canStop={stopToken !== null}
           stopped={serverStopped}
@@ -229,6 +284,7 @@ function AppInner() {
       ) : (
         <LibraryScreen
           maps={data.maps}
+          trash={data.trash ?? []}
           onOpen={openMap}
           onCreate={handleCreateNew}
           onLoadSample={handleLoadSample}
@@ -239,6 +295,10 @@ function AppInner() {
           }}
           onRename={handleRename}
           onImportFile={handleImportNew}
+          onExportBackup={handleExportBackup}
+          onImportBackup={handleImportBackup}
+          onRestoreTrash={handleRestoreTrash}
+          onEmptyTrash={handleEmptyTrash}
           onOpenTemplates={() => setShowTemplates(true)}
           onOpenAiSettings={openAiSettings}
           canStop={stopToken !== null}
@@ -255,11 +315,11 @@ function AppInner() {
           message={
             <>
               <strong>«{confirm.map.title}»</strong> ({countNodes(confirm.map.root)} nodos) se
-              eliminará de tu biblioteca de forma permanente. Si querés conservarlo, exportalo
-              antes como .json o .mm.
+              moverá a la papelera. Desde la biblioteca podés restaurarlo o vaciar la papelera
+              cuando ya tengas un backup.
             </>
           }
-          confirmLabel="Eliminar mapa"
+          confirmLabel="Mover a papelera"
           danger
           onConfirm={handleDeleteConfirmed}
           onClose={() => setConfirm(null)}

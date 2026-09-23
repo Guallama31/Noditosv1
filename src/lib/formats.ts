@@ -88,9 +88,27 @@ function toMM(node: MindNode, depth: number): string {
   return `${ind}<node ${attrs.join(" ")}>\n${inner}${ind}</node>\n`;
 }
 
+function metaParts(node: MindNode): string[] {
+  const m = node.meta;
+  if (!m) return [];
+  const parts: string[] = [];
+  if (m.taskDone) parts.push("tarea completada");
+  if (m.status && m.status !== "none") parts.push(`estado: ${m.status}`);
+  if (m.priority && m.priority !== "none") parts.push(`prioridad: ${m.priority}`);
+  if (m.dueDate) parts.push(`vence: ${m.dueDate}`);
+  if (m.assignee) parts.push(`responsable: ${m.assignee}`);
+  if (m.progress !== undefined) parts.push(`progreso: ${m.progress}%`);
+  if (m.tags?.length) parts.push(`etiquetas: ${m.tags.map((t) => `#${t}`).join(" ")}`);
+  return parts;
+}
+
 function toMarkdown(node: MindNode, level: number): string {
   const ind = "  ".repeat(level);
-  let out = `${ind}- ${node.text.replace(/\n/g, `\n${ind}  `) || "(vacío)"}\n`;
+  const checkbox = node.meta?.taskDone !== undefined ? (node.meta.taskDone ? "[x] " : "[ ] ") : "";
+  let out = `${ind}- ${checkbox}${node.text.replace(/\n/g, `\n${ind}  `) || "(vacío)"}\n`;
+  const meta = metaParts(node);
+  if (meta.length) out += `${ind}  _${meta.join(" · ")}_\n`;
+  if (node.image?.source === "url") out += `${ind}  ![${node.image.alt ?? node.text}](${node.image.src})\n`;
   if (node.notes.trim()) for (const l of node.notes.split("\n")) out += `${ind}  > ${l}\n`;
   for (const c of node.children) out += toMarkdown(c, level + 1);
   return out;
@@ -100,6 +118,11 @@ function toOPML(node: MindNode, depth: number): string {
   const ind = "  ".repeat(depth);
   const attrs = [`text="${esc(node.text)}"`];
   if (node.notes.trim()) attrs.push(`_note="${esc(node.notes)}"`);
+  if (node.meta?.tags?.length) attrs.push(`_tags="${esc(node.meta.tags.join(","))}"`);
+  if (node.meta?.status && node.meta.status !== "none") attrs.push(`_status="${esc(node.meta.status)}"`);
+  if (node.meta?.priority && node.meta.priority !== "none") attrs.push(`_priority="${esc(node.meta.priority)}"`);
+  if (node.meta?.dueDate) attrs.push(`_due="${esc(node.meta.dueDate)}"`);
+  if (node.image?.source === "url") attrs.push(`_image="${esc(node.image.src)}"`);
   if (!node.children.length) return `${ind}<outline ${attrs.join(" ")} />\n`;
   return `${ind}<outline ${attrs.join(" ")}>\n${node.children.map((c) => toOPML(c, depth + 1)).join("")}${ind}</outline>\n`;
 }
@@ -109,8 +132,11 @@ function txtNoteLines(notes: string, indent: string): string {
 }
 
 function toTXT(node: MindNode, prefix: string, connector: string, isLast: boolean): string {
-  let out = `${prefix}${connector}${node.text.trim() || "(sin texto)"}\n`;
+  const checkbox = node.meta?.taskDone !== undefined ? (node.meta.taskDone ? "[x] " : "[ ] ") : "";
+  let out = `${prefix}${connector}${checkbox}${node.text.trim() || "(sin texto)"}\n`;
   const childPrefix = prefix + (connector ? (isLast ? "   " : "│  ") : "");
+  const meta = metaParts(node);
+  if (meta.length) out += `${childPrefix}Meta: ${meta.join(" · ")}\n`;
   if (node.notes.trim()) out += txtNoteLines(node.notes, childPrefix);
   node.children.forEach((c, i) => {
     const last = i === node.children.length - 1;
@@ -249,7 +275,18 @@ function parseMM(content: string): { root: MindNode; title?: string } {
 
 function fromOutline(el: Element): MindNode {
   const children = Array.from(el.children).filter((c) => c.tagName === "outline").map(fromOutline);
-  return createNode(el.getAttribute("text") ?? "", { notes: el.getAttribute("_note") ?? el.getAttribute("note") ?? "" }, children);
+  const tags = (el.getAttribute("_tags") ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+  const imageUrl = el.getAttribute("_image");
+  return createNode(
+    el.getAttribute("text") ?? "",
+    {
+      notes: el.getAttribute("_note") ?? el.getAttribute("note") ?? "",
+      meta: tags.length ? { tags } : null,
+      image: imageUrl ? { src: imageUrl, aspect: 16 / 9, source: "url" } : null,
+      kind: imageUrl ? "image" : "idea",
+    },
+    children,
+  );
 }
 
 function parseOPML(content: string): { root: MindNode; title?: string } {

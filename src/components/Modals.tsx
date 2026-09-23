@@ -88,6 +88,8 @@ const SHORTCUTS: Array<[string[], string]> = [
   [["←", "→"], "Ir al padre o al primer hijo"],
   [["Ctrl", "Z"], "Deshacer"],
   [["Ctrl", "Y"], "Rehacer"],
+  [["Ctrl", "F"], "Buscar y reemplazar"],
+  [["Ctrl", "S"], "Confirmar guardado automático"],
   [["Ctrl", "E"], "Exportar mapa"],
   [["Ctrl", "O"], "Importar archivo"],
   [["Esc"], "Deseleccionar / cerrar"],
@@ -126,8 +128,9 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
         restaura la distribución automática. Con doble clic en el fondo creás una rama
         nueva; con <kbd className="kbd">Ctrl</kbd>+Clic sobre un vínculo, se abre la
         página. También podés <strong>importar documentos Word (.docx)</strong>: se
-        convierten solos en nodos respetando la jerarquía. Y al editar un nodo aparece
-        una <strong>barra de formato</strong> con 50 tipografías gratuitas.
+        convierten solos en nodos respetando la jerarquía. También podés arrastrar imágenes
+        al lienzo o pegarlas desde el portapapeles; Noditos las optimiza para proteger el almacenamiento.
+        Y al editar un nodo aparece una <strong>barra de formato</strong> con 50 tipografías gratuitas.
       </div>
     </Modal>
   );

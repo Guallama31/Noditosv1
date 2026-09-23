@@ -6,6 +6,7 @@ import type {
   NodeFont,
   NodeImage,
   NodeKind,
+  NodeMeta,
   NodePos,
 } from "../types";
 import {
@@ -163,6 +164,48 @@ export function useMindMap(initial: MapSnapshot) {
 
     updateNotes(id: string, notes: string) {
       mutate((s) => ({ ...s, root: updateNode(s.root, id, (n) => ({ ...n, notes })) }));
+    },
+
+    updateMeta(id: string, patch: NodeMeta | null) {
+      mutate((s) => ({
+        ...s,
+        root: updateNode(s.root, id, (n) => ({
+          ...n,
+          meta: patch === null ? null : { ...(n.meta ?? {}), ...patch },
+        })),
+      }));
+    },
+
+    replaceText(
+      query: string,
+      replacement: string,
+      opts: { includeText?: boolean; includeNotes?: boolean } = {},
+    ): number {
+      const needle = query.trim();
+      if (!needle) return 0;
+      const includeText = opts.includeText !== false;
+      const includeNotes = opts.includeNotes !== false;
+      const pattern = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+      let count = 0;
+      const apply = (value: string) => {
+        let local = 0;
+        const next = value.replace(pattern, () => {
+          local += 1;
+          return replacement;
+        });
+        count += local;
+        return next;
+      };
+      const walk = (n: MindNode): MindNode => {
+        const nextText = includeText ? apply(n.text) : n.text;
+        const nextNotes = includeNotes ? apply(n.notes) : n.notes;
+        const children = n.children.map(walk);
+        const changed = nextText !== n.text || nextNotes !== n.notes || children.some((c, i) => c !== n.children[i]);
+        return changed ? { ...n, text: nextText, notes: nextNotes, children } : n;
+      };
+      const root = walk(snapRef.current.root);
+      if (count > 0) mutate((s) => ({ ...s, root }));
+      return count;
     },
 
     setColor(id: string, color: string | null) {
