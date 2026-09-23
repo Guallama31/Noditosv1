@@ -22,6 +22,25 @@ describe("formats", () => {
     expect(md).toContain("progreso: 100%");
   });
 
+  it("importa Markdown jerárquico con tareas y notas", () => {
+    const parsed = parseFile(
+      "plan.md",
+      `# Plan\n\n## Investigación\n- [x] Mercado\n  - Competidores\n> Revisar fuentes\n\n## Lanzamiento\n- Mensaje`,
+    );
+    expect(parsed.title).toBe("Plan");
+    expect(parsed.root.text).toBe("Plan");
+    expect(parsed.root.children[0].text).toBe("Investigación");
+    expect(parsed.root.children[0].children[0].meta?.taskDone).toBe(true);
+    expect(parsed.root.children[0].children[0].children[0].notes).toBe("Revisar fuentes");
+  });
+
+  it("reimporta texto plano exportado como árbol", () => {
+    const parsed = parseFile("plan.txt", "Plan\n├─ Investigación\n│  └─ Mercado\n└─ Lanzamiento");
+    expect(parsed.root.text).toBe("Plan");
+    expect(parsed.root.children.map((n) => n.text)).toEqual(["Investigación", "Lanzamiento"]);
+    expect(parsed.root.children[0].children[0].text).toBe("Mercado");
+  });
+
   it("genera slugs estables", () => {
     expect(slugify("Árbol de ideas 2026" )).toBe("arbol-de-ideas-2026");
   });

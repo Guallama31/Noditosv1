@@ -16,6 +16,7 @@ import type { StoredMap, TrashedMap } from "../lib/library";
 import { buildPreview, timeAgo } from "../lib/library";
 import { countNodes, maxDepth } from "../lib/tree";
 import { isAiConfigured, loadAiConfig, PROVIDERS } from "../lib/ai";
+import { IMPORT_ACCEPT } from "../lib/formats";
 
 function MapCard({
   map,
@@ -437,7 +438,7 @@ export function LibraryScreen({
       <input
         ref={fileRef}
         type="file"
-        accept=".mm,.json,.opml,.xml,.docx"
+        accept={IMPORT_ACCEPT}
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];

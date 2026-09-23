@@ -41,6 +41,7 @@ function distCandidates() {
   return cands;
 }
 const DIST = distCandidates().find((d) => fs.existsSync(path.join(d, "index.html")));
+const DIST_ROOT = DIST ? path.resolve(DIST) : null;
 
 const LOG_PATH = isPkg
   ? path.join(path.dirname(process.execPath), "Noditos-servidor.log")
@@ -160,7 +161,14 @@ function findFreePort(start, cb) {
 function startServer(port) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${HOST}:${port}`);
-    const pathname = decodeURIComponent(url.pathname);
+    let pathname;
+    try {
+      pathname = decodeURIComponent(url.pathname);
+    } catch {
+      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("URL inválida");
+      return;
+    }
     log(`${req.method} ${pathname}`);
 
     if (pathname === "/__noditos/ping") {
@@ -168,6 +176,11 @@ function startServer(port) {
       return;
     }
     if (pathname === "/__noditos/stop") {
+      if (req.method !== "POST") {
+        res.writeHead(405, { "Allow": "POST", "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ error: "método no permitido" }));
+        return;
+      }
       if (url.searchParams.get("token") !== TOKEN) {
         sendJson(res, 403, { error: "token inválido" });
         return;
@@ -178,15 +191,16 @@ function startServer(port) {
       return;
     }
 
-    let file = pathname === "/" ? "/index.html" : pathname;
-    let filePath = path.join(DIST, file);
-    if (!filePath.startsWith(DIST)) {
-      res.writeHead(403);
+    const relativeFile = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+    let filePath = path.resolve(DIST_ROOT, relativeFile);
+    const insideDist = filePath === DIST_ROOT || filePath.startsWith(DIST_ROOT + path.sep);
+    if (!insideDist || pathname.includes("\0")) {
+      res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Prohibido");
       return;
     }
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-      filePath = path.join(DIST, "index.html"); // SPA fallback
+      filePath = path.join(DIST_ROOT, "index.html"); // SPA fallback
     }
 
     try {
