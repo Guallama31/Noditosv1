@@ -51,7 +51,7 @@ function MapCard({
         className="relative h-[132px] overflow-hidden border-b border-ink-100"
         style={{
           background:
-            "radial-gradient(rgba(94,94,110,0.16) 1px, transparent 1px) 0 0/16px 16px, linear-gradient(160deg,#f6f5f2 0%, #efede8 100%)",
+            "radial-gradient(rgba(23,23,32,0.07) 1px, transparent 1px) 0 0/16px 16px, linear-gradient(to right, rgba(23,23,32,0.035) 1px, transparent 1px) 0 0/48px 48px, linear-gradient(to bottom, rgba(23,23,32,0.035) 1px, transparent 1px) 0 0/48px 48px, linear-gradient(160deg,#fafafb 0%, #f4f4f6 100%)",
         }}
       >
         <svg
@@ -224,9 +224,9 @@ export function LibraryScreen({
   const totalNodes = maps.reduce((acc, m) => acc + countNodes(m.root), 0);
 
   return (
-    <div className="canvas-dots relative flex-1 overflow-y-auto">
-      <div className="wash wash-a" style={{ width: 520, height: 520, left: "-8%", top: "-12%", background: "rgba(105,99,77,0.14)" }} />
-      <div className="wash wash-b" style={{ width: 560, height: 560, right: "-10%", bottom: "-16%", background: "rgba(181,74,51,0.10)" }} />
+    <div className="app-surface app-surface--fixed relative flex-1 overflow-y-auto">
+      <div className="wash wash-a" style={{ width: 520, height: 520, left: "-8%", top: "-12%", background: "rgba(120,124,138,0.10)" }} />
+      <div className="wash wash-b" style={{ width: 560, height: 560, right: "-10%", bottom: "-16%", background: "rgba(140,136,150,0.08)" }} />
 
       <div className="relative mx-auto max-w-5xl px-6 pb-16 pt-10">
         <header className="card-in">
@@ -429,9 +429,8 @@ export function LibraryScreen({
         <footer className="card-in mt-16 pb-2 text-center" style={{ animationDelay: "220ms" }}>
           <div className="mx-auto mb-4 h-px w-14 bg-ink-300/40" />
           <p className="font-display text-[15px] font-bold tracking-tight text-ink-500">
-            Hecho por <span className="text-ink-700">JM</span>
+            Equipo <span className="text-ink-700">Noditos</span>
           </p>
-          <p className="mt-1.5 text-[10px] font-semibold uppercase tracking-[0.3em] text-[#c7c4bb]">Using Qwen</p>
         </footer>
       </div>
 

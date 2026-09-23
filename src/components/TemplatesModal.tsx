@@ -20,7 +20,7 @@ function TemplateCard({ template, onUse }: { template: MapTemplate; onUse: (t: M
         className="relative h-[104px] overflow-hidden border-b border-ink-100"
         style={{
           background:
-            "radial-gradient(rgba(94,94,110,0.14) 1px, transparent 1px) 0 0/14px 14px, linear-gradient(160deg,#f6f5f2 0%, #efede8 100%)",
+            "radial-gradient(rgba(23,23,32,0.07) 1px, transparent 1px) 0 0/14px 14px, linear-gradient(to right, rgba(23,23,32,0.035) 1px, transparent 1px) 0 0/42px 42px, linear-gradient(to bottom, rgba(23,23,32,0.035) 1px, transparent 1px) 0 0/42px 42px, linear-gradient(160deg,#fafafb 0%, #f4f4f6 100%)",
         }}
       >
         <svg

@@ -44,7 +44,7 @@ function readStopToken(): string | null {
 /** Pantalla de recuperación global: ningún error deja la app en negro. */
 function CrashScreen({ error }: { error: Error }) {
   return (
-    <div className="canvas-dots flex h-full items-center justify-center p-6">
+    <div className="app-surface flex h-full items-center justify-center p-6">
       <div className="pop-in w-full max-w-md rounded-2xl border border-ink-200 bg-white p-8 text-center shadow-2xl shadow-ink-900/15">
         <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-brand/15 text-brand">
           <Network size={26} strokeWidth={2.2} />

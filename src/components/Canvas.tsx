@@ -1002,8 +1002,8 @@ export function Canvas({
       onDragOver={onCanvasDragOver}
       onDrop={onCanvasDrop}
     >
-      <div className="wash wash-a" style={{ width: 640, height: 640, left: "-10%", top: "-15%", background: "rgba(105,99,77,0.16)" }} />
-      <div className="wash wash-b" style={{ width: 700, height: 700, right: "-12%", bottom: "-20%", background: "rgba(181,74,51,0.10)" }} />
+      <div className="wash wash-a" style={{ width: 640, height: 640, left: "-10%", top: "-15%", background: "rgba(120,124,138,0.10)" }} />
+      <div className="wash wash-b" style={{ width: 700, height: 700, right: "-12%", bottom: "-20%", background: "rgba(140,136,150,0.08)" }} />
 
       <div
         className={animating ? "canvas-anim" : undefined}
