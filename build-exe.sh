@@ -64,7 +64,7 @@ fi
 
 if [ -z "$TRY_VERSIONS" ]; then
   echo "        Sin acceso a la lista oficial; probando versiones conocidas..."
-  TRY_VERSIONS="20.20.1 20.20.0 20.19.4 18.20.8"
+  TRY_VERSIONS="22.23.2 20.20.2 24.18.1 18.20.8"
 else
   echo "        Versiones a probar: $TRY_VERSIONS"
 fi
