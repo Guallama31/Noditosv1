@@ -9,6 +9,7 @@ import {
   FileText,
   List,
   ListTree,
+  Share2,
   Wand2,
   X,
 } from "lucide-react";
@@ -23,6 +24,7 @@ import {
   slugify,
   type ExportFormat,
 } from "../lib/formats";
+import { createShareUrl } from "../lib/share";
 import { Modal } from "./Modals";
 
 const FORMAT_ICONS: Record<ExportFormat, React.ReactNode> = {
@@ -59,6 +61,16 @@ export function ExportModal({
     const ok = await copyText(content);
     setCopied(ok);
     notify(ok ? "Copiado al portapapeles" : "No se pudo copiar", ok ? "success" : "error");
+  };
+
+  const doShare = async () => {
+    const url = createShareUrl(root, title);
+    if (url.length > 180_000) {
+      notify("Este mapa es demasiado grande para compartirlo como enlace. Exportá un backup o usá imágenes por URL.", "error");
+      return;
+    }
+    const ok = await copyText(url);
+    notify(ok ? "Enlace copiado al portapapeles" : "No se pudo copiar el enlace", ok ? "success" : "error");
   };
 
   const doDownload = async () => {
@@ -127,6 +139,14 @@ export function ExportModal({
           </pre>
 
           <div className="mt-4 flex items-center justify-end gap-2">
+            <button
+              onClick={doShare}
+              className="mr-auto flex items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-3.5 py-2 text-[13px] font-semibold text-ink-600 transition hover:bg-ink-50"
+              title="Copia un enlace con el mapa embebido. Para mapas grandes conviene exportar backup."
+            >
+              <Share2 size={14} />
+              Copiar enlace
+            </button>
             {format !== "docx" && (
               <button
                 onClick={doCopy}

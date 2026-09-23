@@ -1,11 +1,11 @@
 import { X } from "lucide-react";
-import type { TemplateDef } from "../lib/templates";
+import type { MapTemplate } from "../lib/templates";
 import { TEMPLATES } from "../lib/templates";
 import { buildPreview } from "../lib/library";
 import { countNodes, maxDepth } from "../lib/tree";
 import { Modal } from "./Modals";
 
-function TemplateCard({ template, onUse }: { template: TemplateDef; onUse: (t: TemplateDef) => void }) {
+function TemplateCard({ template, onUse }: { template: MapTemplate; onUse: (t: MapTemplate) => void }) {
   const root = template.build();
   const preview = buildPreview(root);
   const nodes = countNodes(root);
@@ -46,7 +46,7 @@ function TemplateCard({ template, onUse }: { template: TemplateDef; onUse: (t: T
         </svg>
         <span
           className="absolute right-2 top-2 rounded-md px-2 py-0.5 text-[10px] font-bold text-white opacity-0 shadow transition group-hover:opacity-100"
-          style={{ background: template.color }}
+          style={{ background: template.accent }}
         >
           Usar plantilla →
         </span>
@@ -55,13 +55,13 @@ function TemplateCard({ template, onUse }: { template: TemplateDef; onUse: (t: T
         <div className="flex items-center gap-2">
           <span
             className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-white shadow-sm"
-            style={{ background: template.color }}
+            style={{ background: template.accent }}
           >
             <Icon size={16} />
           </span>
           <p className="truncate font-display text-[14px] font-bold text-ink-900">{template.name}</p>
         </div>
-        <p className="mt-1.5 line-clamp-2 text-[11.5px] leading-snug text-ink-500">{template.desc}</p>
+        <p className="mt-1.5 line-clamp-2 text-[11.5px] leading-snug text-ink-500">{template.tagline}</p>
         <p className="mt-2 text-[10.5px] font-bold text-ink-400">
           {nodes} nodos · {maxDepth(root)} niveles
         </p>
@@ -70,7 +70,7 @@ function TemplateCard({ template, onUse }: { template: TemplateDef; onUse: (t: T
   );
 }
 
-export function TemplatesModal({ onClose, onUse }: { onClose: () => void; onUse: (t: TemplateDef) => void }) {
+export function TemplatesModal({ onClose, onUse }: { onClose: () => void; onUse: (t: MapTemplate) => void }) {
   return (
     <Modal onClose={onClose} width={920}>
       <div className="flex items-center justify-between border-b border-ink-200 px-6 py-4">

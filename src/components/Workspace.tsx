@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import type { MapSnapshot, MindNode, NotifyFn } from "../types";
 import { useMindMap } from "../hooks/useMindMap";
@@ -8,10 +8,13 @@ import { Inspector } from "./Inspector";
 import { Canvas, type FocusTarget } from "./Canvas";
 import { AiAssistant } from "./AiAssistant";
 import { ExportModal } from "./ExportModal";
-import { ConfirmModal, HelpModal } from "./Modals";
+import { ConfirmModal, HelpModal, Modal } from "./Modals";
+import { SearchPanel } from "./SearchPanel";
 import { IMPORT_ACCEPT, parseAnyFile } from "../lib/formats";
 import { loadAiConfig } from "../lib/ai";
+import { DEFAULT_SEARCH_OPTIONS, searchNodes } from "../lib/search";
 import { countNodes, findNode, pathOf } from "../lib/tree";
+import { timeAgo, type MapVersion } from "../lib/library";
 
 type ConfirmState =
   | { kind: "import"; root: MindNode; title?: string; filename: string }
@@ -25,6 +28,7 @@ export function Workspace({
   onCreateNew,
   onOpenAiSettings,
   notify,
+  versions,
   flushRef,
   canStop,
   stopped,
@@ -36,6 +40,7 @@ export function Workspace({
   onCreateNew: () => void;
   onOpenAiSettings: () => void;
   notify: NotifyFn;
+  versions: MapVersion[];
   flushRef: React.MutableRefObject<() => void>;
   canStop: boolean;
   stopped: boolean;
@@ -65,6 +70,11 @@ export function Workspace({
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [showExport, setShowExport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOptions, setSearchOptions] = useState(DEFAULT_SEARCH_OPTIONS);
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
   const [fitTick, setFitTick] = useState(0);
@@ -103,9 +113,25 @@ export function Workspace({
         const image = await fileToNodeImage(file);
         api.setImage(id, image);
         api.select(id);
-        notify("Imagen añadida al nodo");
+        notify("Imagen añadida al nodo (optimizada para no llenar el almacenamiento)");
       } catch {
         notify("No se pudo procesar la imagen", "error");
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [notify],
+  );
+
+  const setImageFromUrl = useCallback(
+    async (id: string, url: string) => {
+      try {
+        const { urlToNodeImage } = await import("../lib/image");
+        const image = await urlToNodeImage(url);
+        api.setImage(id, image);
+        api.select(id);
+        notify("Imagen vinculada por URL (no ocupa espacio local)");
+      } catch (err) {
+        notify(err instanceof Error ? err.message : "No se pudo cargar la imagen por URL", "error");
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -132,9 +158,18 @@ export function Workspace({
 
   const selectedNode = api.selectedId ? findNode(api.root, api.selectedId) : null;
   const selectedPath = api.selectedId ? pathOf(api.root, api.selectedId) : null;
+  const searchResults = useMemo(
+    () => searchNodes(api.root, searchQuery, searchOptions),
+    [api.root, searchQuery, searchOptions],
+  );
+  const searchMatchIds = useMemo(() => new Set(searchResults.map((r) => r.node.id)), [searchResults]);
+
+  useEffect(() => {
+    if (activeSearchIndex >= searchResults.length) setActiveSearchIndex(Math.max(0, searchResults.length - 1));
+  }, [activeSearchIndex, searchResults.length]);
 
   const modalOpen =
-    showExport || showHelp || confirm !== null || pendingMove !== null;
+    showExport || showHelp || showHistory || confirm !== null || pendingMove !== null;
 
   return (
     <>
@@ -149,6 +184,8 @@ export function Workspace({
         onCreateNew={onCreateNew}
         onImport={openImport}
         onExport={() => setShowExport(true)}
+        onSearch={() => setSearchOpen(true)}
+        onHistory={() => setShowHistory(true)}
         onHelp={() => setShowHelp(true)}
         outlineOpen={outlineOpen}
         onToggleOutline={() => setOutlineOpen((o) => !o)}
@@ -180,10 +217,39 @@ export function Workspace({
             hotkeysDisabled={modalOpen}
             onExportHotkey={() => setShowExport(true)}
             onImportHotkey={openImport}
+            onSearchHotkey={() => setSearchOpen(true)}
             onHelpHotkey={() => setShowHelp(true)}
             onRequestImage={requestImage}
             onRequestMove={(id, targetId) => setPendingMove({ id, targetId })}
+            searchMatchIds={searchOpen ? searchMatchIds : undefined}
           />
+          {searchOpen && (
+            <SearchPanel
+              query={searchQuery}
+              onQueryChange={(value) => {
+                setSearchQuery(value);
+                setActiveSearchIndex(0);
+              }}
+              options={searchOptions}
+              onOptionsChange={(next) => {
+                setSearchOptions(next);
+                setActiveSearchIndex(0);
+              }}
+              results={searchResults}
+              activeIndex={activeSearchIndex}
+              onActiveIndexChange={setActiveSearchIndex}
+              onFocusResult={(result) => focusNode(result.node.id)}
+              onReplace={(replacement) => {
+                const changed = api.replaceText(searchQuery, replacement, {
+                  includeText: searchOptions.includeText,
+                  includeNotes: searchOptions.includeNotes,
+                });
+                notify(changed === 1 ? "1 coincidencia reemplazada" : `${changed} coincidencias reemplazadas`, changed ? "success" : "info");
+                return changed;
+              }}
+              onClose={() => setSearchOpen(false)}
+            />
+          )}
           <AiAssistant
             api={api}
             notify={notify}
@@ -213,6 +279,7 @@ export function Workspace({
             onClose={() => setInspectorOpen(false)}
             onFocusNode={focusNode}
             onPickImage={requestImage}
+            onSetImageUrl={(id, url) => void setImageFromUrl(id, url)}
           />
         )}
       </div>
@@ -233,6 +300,47 @@ export function Workspace({
         <ExportModal root={api.root} title={api.title} onClose={() => setShowExport(false)} notify={notify} />
       )}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {showHistory && (
+        <Modal onClose={() => setShowHistory(false)} width={620}>
+          <div className="border-b border-ink-200 px-6 py-4">
+            <h2 className="font-display text-lg font-bold text-ink-900">Historial de versiones</h2>
+            <p className="mt-1 text-[12.5px] text-ink-500">
+              Noditos guarda una versión automática cada pocos minutos de edición y otra al eliminar/restaurar.
+            </p>
+          </div>
+          <div className="max-h-[58vh] overflow-y-auto p-4">
+            {versions.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-ink-200 px-4 py-8 text-center text-[13px] text-ink-400">
+                Todavía no hay versiones previas de este mapa.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {[...versions].sort((a, b) => b.createdAt - a.createdAt).map((version) => (
+                  <div key={version.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-ink-100 bg-white px-3 py-2.5 shadow-sm">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-bold text-ink-800">{version.title}</p>
+                      <p className="text-[11px] font-medium text-ink-400">
+                        {timeAgo(version.createdAt)} · {version.nodeCount} nodos · {version.reason === "auto" ? "auto" : version.reason}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        api.replaceMap(version.root, version.title);
+                        setShowHistory(false);
+                        setFitTick((t) => t + 1);
+                        notify("Versión restaurada. Podés deshacer con Ctrl+Z.", "info");
+                      }}
+                      className="rounded-lg bg-ink-800 px-3 py-1.5 text-[12px] font-bold text-white transition hover:bg-ink-700"
+                    >
+                      Restaurar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
 
       {confirm?.kind === "import" && (
         <ConfirmModal

@@ -11,7 +11,7 @@ import {
   StickyNote,
   Wand2,
 } from "lucide-react";
-import type { MindNode, NodeFont, NodeKind, NotifyFn } from "../types";
+import type { MindNode, NodeFont, NodeImage, NodeKind, NotifyFn } from "../types";
 import type { MindMapApi } from "../hooks/useMindMap";
 import {
   computeLayout,
@@ -33,7 +33,7 @@ import {
   removeNode,
 } from "../lib/tree";
 import { parsePastedHtml, parsePastedText } from "../lib/paste";
-import { fileToNodeImage } from "../lib/image";
+import { fileToNodeImage, isProbablyImageUrl, urlToNodeImage } from "../lib/image";
 import { ensureFonts } from "../lib/fonts";
 import { openUrl } from "../lib/links";
 import { LinkText } from "./LinkText";
@@ -102,6 +102,7 @@ interface NodeViewProps {
   editing: boolean;
   dimmed: boolean;
   isTarget: boolean;
+  searchMatch?: boolean;
   onPointerDown: (e: React.PointerEvent, id: string) => void;
   onPointerMove: (e: React.PointerEvent) => void;
   onPointerUp: () => void;
@@ -124,6 +125,7 @@ const NodeView = memo(function NodeView({
   editing,
   dimmed,
   isTarget,
+  searchMatch,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -190,7 +192,7 @@ const NodeView = memo(function NodeView({
           lineHeight: `${ty.lineHeight}px`,
           fontFamily: ty.fontFamily,
           fontStyle: ty.italic ? "italic" : undefined,
-          boxShadow: st.shadow,
+          boxShadow: searchMatch ? `${st.shadow}, 0 0 0 4px rgba(181,74,51,0.22)` : st.shadow,
           opacity: st.opacity,
           filter: selected ? "saturate(1.02)" : undefined,
           padding: `${ty.padY}px ${ty.padX}px`,
@@ -202,7 +204,7 @@ const NodeView = memo(function NodeView({
             {img && node.image ? (
               <img
                 src={node.image.src}
-                alt={node.text.trim() || "Imagen del nodo"}
+                alt={node.image.alt || node.text.trim() || "Imagen del nodo"}
                 draggable={false}
                 className="rounded-lg object-cover"
                 style={{ width: img.w, height: img.h }}
@@ -332,8 +334,10 @@ interface CanvasProps {
   hotkeysDisabled: boolean;
   onExportHotkey: () => void;
   onImportHotkey: () => void;
+  onSearchHotkey: () => void;
   onHelpHotkey: () => void;
   onRequestImage: (id: string) => void;
+  searchMatchIds?: Set<string>;
   onRequestMove: (id: string, targetId: string) => void;
 }
 
@@ -345,9 +349,11 @@ export function Canvas({
   hotkeysDisabled,
   onExportHotkey,
   onImportHotkey,
+  onSearchHotkey,
   onHelpHotkey,
   onRequestImage,
   onRequestMove,
+  searchMatchIds,
 }: CanvasProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
@@ -596,6 +602,16 @@ export function Canvas({
         onExportHotkey();
         return;
       }
+      if (mod && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        onSearchHotkey();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        notifyRef.current("Guardado automático al día", "info");
+        return;
+      }
       if (mod && e.key.toLowerCase() === "o") {
         e.preventDefault();
         onImportHotkey();
@@ -729,6 +745,45 @@ export function Canvas({
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
   }, []);
+
+  /* ---------- arrastrar y soltar imágenes ---------- */
+  const applyImageToCurrentSelection = useCallback((image: NodeImage, verb = "añadida") => {
+    const selId = apiRef.current.selectedId ?? apiRef.current.root.id;
+    const selected = findNode(apiRef.current.root, selId);
+    if (selected?.kind === "image") {
+      apiRef.current.setImage(selId, image);
+      notifyRef.current(`Imagen ${verb} en el nodo seleccionado`);
+    } else {
+      apiRef.current.addImageChild(selId, image);
+      notifyRef.current(`Nodo de imagen creado con la imagen ${verb}`);
+    }
+  }, []);
+
+  const onCanvasDragOver = useCallback((e: React.DragEvent) => {
+    const types = Array.from(e.dataTransfer.types);
+    if (types.includes("Files") || types.includes("text/uri-list") || types.includes("text/plain")) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  }, []);
+
+  const onCanvasDrop = useCallback((e: React.DragEvent) => {
+    const files = Array.from(e.dataTransfer.files ?? []);
+    const imageFile = files.find((file) => file.type.startsWith("image/"));
+    const uri = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
+    if (!imageFile && !isProbablyImageUrl(uri)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (imageFile) {
+      fileToNodeImage(imageFile)
+        .then((image) => applyImageToCurrentSelection(image, "soltada"))
+        .catch(() => notifyRef.current("No se pudo procesar la imagen soltada", "error"));
+      return;
+    }
+    urlToNodeImage(uri)
+      .then((image) => applyImageToCurrentSelection(image, "por URL"))
+      .catch((err) => notifyRef.current(err instanceof Error ? err.message : "No se pudo cargar la imagen por URL", "error"));
+  }, [applyImageToCurrentSelection]);
 
   /* ---------- handlers de nodo (estables) ---------- */
   const hitTest = (dragRect: { left: number; right: number; top: number; bottom: number }, excludeId: string): string | null => {
@@ -944,6 +999,8 @@ export function Canvas({
       onPointerMove={onBgPointerMove}
       onPointerUp={onBgPointerUp}
       onDoubleClick={onBgDoubleClick}
+      onDragOver={onCanvasDragOver}
+      onDrop={onCanvasDrop}
     >
       <div className="wash wash-a" style={{ width: 640, height: 640, left: "-10%", top: "-15%", background: "rgba(105,99,77,0.16)" }} />
       <div className="wash wash-b" style={{ width: 700, height: 700, right: "-12%", bottom: "-20%", background: "rgba(181,74,51,0.10)" }} />
@@ -1029,6 +1086,7 @@ export function Canvas({
                 editing={api.editingId === box.id}
                 dimmed={false}
                 isTarget={drag?.over === box.id}
+                searchMatch={searchMatchIds?.has(box.id)}
                 onPointerDown={onNodePointerDown}
                 onPointerMove={onNodePointerMove}
                 onPointerUp={onNodePointerUp}

@@ -2,12 +2,14 @@ import {
   Download,
   FilePlus2,
   HelpCircle,
+  History,
   LibraryBig,
   Network,
   PanelLeft,
   PanelRight,
   Power,
   Redo2,
+  Search,
   Undo2,
   Upload,
 } from "lucide-react";
@@ -23,6 +25,8 @@ interface ToolbarProps {
   onCreateNew: () => void;
   onImport: () => void;
   onExport: () => void;
+  onSearch: () => void;
+  onHistory: () => void;
   onHelp: () => void;
   outlineOpen: boolean;
   onToggleOutline: () => void;
@@ -116,6 +120,12 @@ export function Toolbar(props: ToolbarProps) {
         </TBtn>
         <TBtn label="Importar (.mm, .json, .opml, .docx)" onClick={props.onImport}>
           <Upload size={16} />
+        </TBtn>
+        <TBtn label="Buscar (Ctrl+F)" onClick={props.onSearch}>
+          <Search size={16} />
+        </TBtn>
+        <TBtn label="Historial de versiones" onClick={props.onHistory}>
+          <History size={16} />
         </TBtn>
         <button
           onClick={props.onExport}

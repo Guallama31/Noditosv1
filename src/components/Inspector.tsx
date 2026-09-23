@@ -2,18 +2,23 @@ import { useEffect, useState } from "react";
 import {
   AlignLeft,
   ArrowUpRight,
+  CalendarDays,
+  CheckSquare,
   ChevronDown,
   ChevronRight,
+  Flag,
   Heading2,
   Image as ImageIcon,
   Lightbulb,
   Link,
   Plus,
   StickyNote,
+  Tag,
+  User,
   Trash2,
   X,
 } from "lucide-react";
-import type { LayoutMode, MindNode, NodeKind } from "../types";
+import type { LayoutMode, MindNode, NodeKind, NodePriority, NodeReviewStatus, NodeRisk, NodeStatus } from "../types";
 import type { MindMapApi } from "../hooks/useMindMap";
 import { BRANCH_COLORS, LAYOUT_MODES, withAlpha } from "../lib/layout";
 import { countNodes } from "../lib/tree";
@@ -25,6 +30,33 @@ const KIND_META: Record<NodeKind, { label: string; icon: React.ReactNode; hint: 
   text: { label: "Texto", icon: <AlignLeft size={14} />, hint: "Párrafo extenso" },
   image: { label: "Imagen", icon: <ImageIcon size={14} />, hint: "Imagen con leyenda" },
 };
+
+const PRIORITIES: Array<{ id: NodePriority; label: string }> = [
+  { id: "none", label: "Sin prioridad" },
+  { id: "low", label: "Baja" },
+  { id: "medium", label: "Media" },
+  { id: "high", label: "Alta" },
+  { id: "urgent", label: "Urgente" },
+];
+const STATUSES: Array<{ id: NodeStatus; label: string }> = [
+  { id: "none", label: "Sin estado" },
+  { id: "todo", label: "Pendiente" },
+  { id: "doing", label: "En curso" },
+  { id: "blocked", label: "Bloqueado" },
+  { id: "done", label: "Terminado" },
+];
+const RISKS: Array<{ id: NodeRisk; label: string }> = [
+  { id: "none", label: "Sin riesgo" },
+  { id: "low", label: "Bajo" },
+  { id: "medium", label: "Medio" },
+  { id: "high", label: "Alto" },
+];
+const REVIEWS: Array<{ id: NodeReviewStatus; label: string }> = [
+  { id: "none", label: "Sin revisión" },
+  { id: "pending", label: "Pendiente" },
+  { id: "approved", label: "Aprobado" },
+  { id: "changes", label: "Con cambios" },
+];
 
 function LayoutGlyph({ mode }: { mode: LayoutMode }) {
   const dot = "h-1.5 w-1.5 rounded-full";
@@ -104,6 +136,7 @@ export function Inspector({
   onClose,
   onFocusNode,
   onPickImage,
+  onSetImageUrl,
 }: {
   node: MindNode;
   path: MindNode[];
@@ -111,9 +144,11 @@ export function Inspector({
   onClose: () => void;
   onFocusNode: (id: string) => void;
   onPickImage: (id: string) => void;
+  onSetImageUrl: (id: string, url: string) => void;
 }) {
   const [text, setText] = useState(node.text);
   const [notes, setNotes] = useState(node.notes);
+  const [imageUrl, setImageUrl] = useState(node.image?.source === "url" ? node.image.src : "");
   const [focused, setFocused] = useState<"text" | "notes" | null>(null);
   const [showKinds, setShowKinds] = useState(false);
   const [showAllKids, setShowAllKids] = useState(false);
@@ -122,6 +157,7 @@ export function Inspector({
   useEffect(() => {
     setText(node.text);
     setNotes(node.notes);
+    setImageUrl(node.image?.source === "url" ? node.image.src : "");
     setShowKinds(false);
     setShowAllKids(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,6 +172,9 @@ export function Inspector({
   const descendants = countNodes(node) - 1;
   const activeMode: LayoutMode = node.layout ?? "auto";
   const urls = findUrls(`${node.text} ${node.notes}`);
+  const meta = node.meta ?? {};
+  const fieldCls = "w-full rounded-lg border border-ink-200 bg-ink-50 px-2.5 py-1.5 text-[12px] font-semibold text-ink-700 transition focus:border-ink-400 focus:bg-white focus:ring-2 focus:ring-ink-200";
+  const setMeta = (patch: NonNullable<MindNode["meta"]>) => api.updateMeta(node.id, patch);
 
   const addKind = (kind: NodeKind) => {
     setShowKinds(false);
@@ -244,6 +283,93 @@ export function Inspector({
         </section>
 
         <section>
+          <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-ink-400">
+            <CheckSquare size={11} className="text-teal-brand" />
+            Tarea y metadatos
+          </p>
+          <div className="space-y-2 rounded-xl border border-ink-100 bg-white p-3">
+            <label className="flex cursor-pointer items-center gap-2 text-[12px] font-semibold text-ink-600">
+              <input
+                type="checkbox"
+                checked={Boolean(meta.taskDone)}
+                onChange={(e) => setMeta({ taskDone: e.target.checked, status: e.target.checked ? "done" : meta.status })}
+                className="h-3.5 w-3.5 accent-[#0f9d8a]"
+              />
+              Marcar como tarea completada
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+                Estado
+                <select value={meta.status ?? "none"} onChange={(e) => setMeta({ status: e.target.value as NodeStatus })} className={`${fieldCls} mt-1`}>
+                  {STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                </select>
+              </label>
+              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+                Prioridad
+                <select value={meta.priority ?? "none"} onChange={(e) => setMeta({ priority: e.target.value as NodePriority })} className={`${fieldCls} mt-1`}>
+                  {PRIORITIES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
+              </label>
+            </div>
+            <label className="block text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+              <Tag size={10} className="mr-1 inline" /> Etiquetas
+              <input
+                value={(meta.tags ?? []).join(", ")}
+                onChange={(e) => setMeta({ tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) })}
+                placeholder="producto, investigación, idea"
+                className={`${fieldCls} mt-1`}
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+                <CalendarDays size={10} className="mr-1 inline" /> Inicio
+                <input type="date" value={meta.startDate ?? ""} onChange={(e) => setMeta({ startDate: e.target.value || undefined })} className={`${fieldCls} mt-1`} />
+              </label>
+              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+                <CalendarDays size={10} className="mr-1 inline" /> Límite
+                <input type="date" value={meta.dueDate ?? ""} onChange={(e) => setMeta({ dueDate: e.target.value || undefined })} className={`${fieldCls} mt-1`} />
+              </label>
+            </div>
+            <label className="block text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+              Progreso: {meta.progress ?? 0}%
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={meta.progress ?? 0}
+                onChange={(e) => setMeta({ progress: Number(e.target.value) })}
+                className="mt-1 w-full accent-[#b54a33]"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+                <User size={10} className="mr-1 inline" /> Responsable
+                <input value={meta.assignee ?? ""} onChange={(e) => setMeta({ assignee: e.target.value || undefined })} className={`${fieldCls} mt-1`} />
+              </label>
+              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+                Categoría
+                <input value={meta.category ?? ""} onChange={(e) => setMeta({ category: e.target.value || undefined })} className={`${fieldCls} mt-1`} />
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+                <Flag size={10} className="mr-1 inline" /> Riesgo
+                <select value={meta.risk ?? "none"} onChange={(e) => setMeta({ risk: e.target.value as NodeRisk })} className={`${fieldCls} mt-1`}>
+                  {RISKS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                </select>
+              </label>
+              <label className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+                Revisión
+                <select value={meta.review ?? "none"} onChange={(e) => setMeta({ review: e.target.value as NodeReviewStatus })} className={`${fieldCls} mt-1`}>
+                  {REVIEWS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                </select>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section>
           <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-ink-400">Tipo de nodo</p>
           <div className="grid grid-cols-4 gap-1.5">
             {(Object.keys(KIND_META) as NodeKind[]).map((k) => {
@@ -266,20 +392,58 @@ export function Inspector({
             })}
           </div>
           {(node.kind ?? "idea") === "image" && (
-            <div className="mt-2 flex gap-1.5">
-              <button
-                onClick={() => onPickImage(node.id)}
-                className="flex-1 rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-[11.5px] font-bold text-ink-600 transition hover:bg-ink-50"
-              >
-                {node.image ? "Reemplazar imagen" : "Elegir imagen"}
-              </button>
-              {node.image && (
+            <div className="mt-2 space-y-2">
+              <div className="flex gap-1.5">
                 <button
-                  onClick={() => api.setImage(node.id, null)}
-                  className="rounded-lg border border-danger/30 bg-danger/5 px-2 py-1.5 text-[11.5px] font-bold text-danger transition hover:bg-danger/10"
+                  onClick={() => onPickImage(node.id)}
+                  className="flex-1 rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-[11.5px] font-bold text-ink-600 transition hover:bg-ink-50"
                 >
-                  Quitar
+                  {node.image ? "Reemplazar imagen" : "Elegir imagen"}
                 </button>
+                {node.image && (
+                  <button
+                    onClick={() => api.setImage(node.id, null)}
+                    className="rounded-lg border border-danger/30 bg-danger/5 px-2 py-1.5 text-[11.5px] font-bold text-danger transition hover:bg-danger/10"
+                  >
+                    Quitar
+                  </button>
+                )}
+              </div>
+              <label className="block text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+                Imagen por URL
+                <div className="mt-1 flex gap-1.5">
+                  <input
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && imageUrl.trim()) onSetImageUrl(node.id, imageUrl);
+                    }}
+                    placeholder="https://…/imagen.jpg"
+                    className="min-w-0 flex-1 rounded-lg border border-ink-200 bg-ink-50 px-2 py-1.5 text-[11.5px] normal-case tracking-normal text-ink-700 placeholder:text-ink-300"
+                  />
+                  <button
+                    onClick={() => imageUrl.trim() && onSetImageUrl(node.id, imageUrl)}
+                    className="rounded-lg bg-ink-800 px-2.5 py-1.5 text-[11px] font-bold normal-case tracking-normal text-white"
+                  >
+                    Usar
+                  </button>
+                </div>
+              </label>
+              {node.image && (
+                <label className="block text-[10px] font-bold uppercase tracking-[0.12em] text-ink-400">
+                  Texto alternativo
+                  <input
+                    value={node.image.alt ?? ""}
+                    onChange={(e) => api.setImage(node.id, { ...node.image!, alt: e.target.value })}
+                    placeholder="Descripción accesible de la imagen"
+                    className="mt-1 w-full rounded-lg border border-ink-200 bg-ink-50 px-2 py-1.5 text-[11.5px] normal-case tracking-normal text-ink-700 placeholder:text-ink-300"
+                  />
+                </label>
+              )}
+              {node.image?.size && (
+                <p className="text-[10.5px] font-semibold text-ink-400">
+                  {node.image.source === "url" ? "Referencia externa" : "Imagen comprimida"} · {Math.round(node.image.size / 1024)} KB
+                </p>
               )}
             </div>
           )}

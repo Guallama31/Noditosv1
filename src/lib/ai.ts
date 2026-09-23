@@ -5,6 +5,8 @@ export type AiProvider = "gemini" | "openai" | "groq" | "ollama";
 export interface AiConfig {
   provider: AiProvider;
   apiKey: string;
+  /** Si es false, la clave solo vive en sessionStorage hasta cerrar la pestaña. */
+  saveApiKey: boolean;
   geminiModel: string;
   openaiModel: string;
   groqModel: string;
@@ -41,6 +43,7 @@ export function defaultAiConfig(): AiConfig {
   return {
     provider: "gemini",
     apiKey: "",
+    saveApiKey: true,
     geminiModel: DEFAULT_MODELS.gemini,
     openaiModel: DEFAULT_MODELS.openai,
     groqModel: DEFAULT_MODELS.groq,
@@ -50,11 +53,17 @@ export function defaultAiConfig(): AiConfig {
 }
 
 const AI_KEY = "noditos.ai.v1";
+const AI_SESSION_KEY = "noditos.ai.sessionKey.v1";
 
 export function loadAiConfig(): AiConfig {
   try {
     const raw = localStorage.getItem(AI_KEY);
-    if (raw) return { ...defaultAiConfig(), ...(JSON.parse(raw) as Partial<AiConfig>) };
+    const saved = raw ? (JSON.parse(raw) as Partial<AiConfig>) : {};
+    const cfg = { ...defaultAiConfig(), ...saved };
+    if (!cfg.saveApiKey) {
+      cfg.apiKey = sessionStorage.getItem(AI_SESSION_KEY) ?? "";
+    }
+    return cfg;
   } catch {
     /* sin config */
   }
@@ -63,7 +72,10 @@ export function loadAiConfig(): AiConfig {
 
 export function saveAiConfig(cfg: AiConfig) {
   try {
-    localStorage.setItem(AI_KEY, JSON.stringify(cfg));
+    const persistable: AiConfig = cfg.saveApiKey ? cfg : { ...cfg, apiKey: "" };
+    localStorage.setItem(AI_KEY, JSON.stringify(persistable));
+    if (cfg.saveApiKey) sessionStorage.removeItem(AI_SESSION_KEY);
+    else sessionStorage.setItem(AI_SESSION_KEY, cfg.apiKey);
   } catch {
     /* almacenamiento no disponible */
   }
@@ -387,10 +399,10 @@ function tryParseJson(raw: string): unknown {
 function extractArray(text: string): unknown[] {
   const clean = stripFences(text);
   const candidates = [
-    ...new Set(
-      Array.from(clean.matchAll(/\[[\s\S]*?\]/g)).map((m) => m[0]),
-      Array.from(clean.matchAll(/\{[\s\S]*?\}/g)).map((m) => m[0]),
-    ),
+    ...new Set([
+      ...Array.from(clean.matchAll(/\[[\s\S]*?\]/g)).map((m) => m[0]),
+      ...Array.from(clean.matchAll(/\{[\s\S]*?\}/g)).map((m) => m[0]),
+    ]),
   ].filter((candidate) => candidate.length > 2 && (candidate.startsWith("[") || candidate.startsWith("{")));
 
   for (const candidate of candidates) {
