@@ -135,9 +135,13 @@ function openBrowser(url) {
     process.platform === "win32" ? "cmd" : process.platform === "darwin" ? "open" : "xdg-open";
   const cmdArgs = process.platform === "win32" ? ["/c", "start", "", url] : [url];
   try {
-    spawn(cmd, cmdArgs, { stdio: "ignore", detached: true }).unref();
+    const child = spawn(cmd, cmdArgs, { stdio: "ignore", detached: true });
+    // El evento "error" es asíncrono: sin este manejador, un fallo al lanzar el
+    // navegador (p. ej. "xdg-open" ausente) tumbaría todo el servidor.
+    child.on("error", () => log(`No se pudo abrir el navegador automáticamente. Abrí ${url} a mano.`));
+    child.unref();
   } catch {
-    log("No se pudo abrir el navegador automáticamente.");
+    log(`No se pudo abrir el navegador automáticamente. Abrí ${url} a mano.`);
   }
 }
 

@@ -49,7 +49,7 @@ if defined TRY_VERSIONS (
   echo        Versiones a probar: %TRY_VERSIONS%
 ) else (
   echo        Sin acceso a la lista oficial; probando versiones conocidas...
-  set "TRY_VERSIONS=20.20.1 20.20.0 20.19.4 18.20.8"
+  set "TRY_VERSIONS=22.23.2 20.20.2 24.18.1 18.20.8"
 )
 echo.
 

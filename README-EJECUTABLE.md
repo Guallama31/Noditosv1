@@ -18,7 +18,7 @@ y empaqueta desde ahí, así tu carpeta puede llamarse como quieras.
 
 ## Para el usuario final
 
-1. Recibe **`Noditos.exe`** (un solo archivo, ~45 MB). No necesita instalar nada.
+1. Recibe **`Noditos.exe`** (un solo archivo, ~60 MB). No necesita instalar nada.
 2. Doble clic → aparece una ventana de consola **por un segundo y se cierra
    sola**: el servidor sigue corriendo **en segundo plano, sin ventana**, y la
    app se abre automáticamente en su navegador en `http://127.0.0.1:4173`.
