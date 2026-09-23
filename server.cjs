@@ -32,6 +32,47 @@ function portArg() {
 
 const isPkg = typeof process.pkg !== "undefined";
 
+/* ---------- SEA (ejecutable de un solo archivo, Node.js oficial) ----------
+ * Cuando Noditos corre como ejecutable único (build-exe.sh / build-exe.bat con
+ * Node SEA), los archivos de dist/ y build-info.json viajan incrustados dentro
+ * del propio .exe como "assets" y se leen con la API node:sea.
+ * Ejecutando con Node normal (desarrollo) o con pkg, se comportan igual que
+ * siempre: dist/ se lee del disco. */
+let SEA = null;
+try {
+  const sea = require("node:sea");
+  if (typeof sea.isSea === "function" && sea.isSea()) {
+    // OJO: según la versión de Node, getRawAsset devuelve Buffer o ArrayBuffer.
+    // Se normaliza SIEMPRE a Buffer (copia defensiva) para que el resto del
+    // servidor pueda usarlo como tal.
+    SEA = {
+      keys: new Set(sea.getAssetKeys()),
+      get(key) {
+        const raw = sea.getRawAsset(key);
+        if (Buffer.isBuffer(raw) || raw instanceof Uint8Array || raw instanceof ArrayBuffer) {
+          return Buffer.from(raw);
+        }
+        return null;
+      },
+    };
+  }
+} catch {
+  /* Node sin node:sea o ejecución normal */
+}
+
+/* ---------- información de versión / build ---------- */
+let BUILD = { version: "dev", builtAt: "", commit: "" };
+try {
+  const raw = SEA
+    ? SEA.get("build-info.json").toString("utf8")
+    : fs.readFileSync(path.join(__dirname, "build-info.json"), "utf8");
+  BUILD = Object.assign(BUILD, JSON.parse(raw));
+} catch {
+  /* sin build-info.json (desarrollo) */
+}
+const BUILD_TAG =
+  "v" + BUILD.version + (BUILD.builtAt ? ` (build ${BUILD.builtAt}${BUILD.commit ? ", " + BUILD.commit : ""})` : "");
+
 /* ---------- ubicación de la carpeta dist/ ---------- */
 function distCandidates() {
   const cands = [];
@@ -40,10 +81,25 @@ function distCandidates() {
   if (isPkg) cands.push(path.join(__dirname, "dist"));
   return cands;
 }
-const DIST = distCandidates().find((d) => fs.existsSync(path.join(d, "index.html")));
-const DIST_ROOT = DIST ? path.resolve(DIST) : null;
+const DIST_ROOT = SEA ? null : (() => {
+  const found = distCandidates().find((d) => fs.existsSync(path.join(d, "index.html")));
+  return found ? path.resolve(found) : null;
+})();
 
-const LOG_PATH = isPkg
+/* ---------- lectura de archivos de la app (disco o incrustados) ---------- */
+/* Devuelve un Buffer con el contenido de dist/<relPath>, o null si no existe. */
+function distBuffer(relPath) {
+  if (SEA) {
+    const key = "dist/" + relPath;
+    return SEA.keys.has(key) ? SEA.get(key) : null;
+  }
+  const filePath = path.resolve(DIST_ROOT, relPath);
+  if (filePath === DIST_ROOT || !filePath.startsWith(DIST_ROOT + path.sep)) return null;
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) return null;
+  return fs.readFileSync(filePath);
+}
+
+const LOG_PATH = isPkg || SEA
   ? path.join(path.dirname(process.execPath), "Noditos-servidor.log")
   : path.join(process.cwd(), "Noditos-servidor.log");
 
@@ -76,7 +132,7 @@ function failKeepOpen(title, detail) {
   process.exit(1);
 }
 
-if (!DIST) {
+if (!SEA && !DIST_ROOT) {
   failKeepOpen(
     'No se encontró la carpeta "dist/" con la app compilada.',
     `Se buscó en:\n    - ${distCandidates().join("\n    - ")}\n\n  Si estás ejecutando con Node directamente, primero compila: npx vite build`
@@ -93,7 +149,13 @@ try {
 
 /* ---------- auto-detestado en segundo plano ---------- */
 if (!FOREGROUND && process.platform === "win32" && !process.env[DETACHED_FLAG]) {
-  const child = spawn(process.execPath, [process.argv[1], ...args, "--foreground"], {
+  // Bajo pkg, argv[1] apunta al script virtual del snapshot y hay que
+  // repasarlo al relanzar. Bajo SEA el ejecutable ya corre su script
+  // incrustado y argv[1] sobra: los argumentos del usuario van directos.
+  const relaunchArgs = SEA
+    ? [...args, "--foreground"]
+    : [process.argv[1], ...args, "--foreground"];
+  const child = spawn(process.execPath, relaunchArgs, {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
@@ -176,7 +238,7 @@ function startServer(port) {
     log(`${req.method} ${pathname}`);
 
     if (pathname === "/__noditos/ping") {
-      sendJson(res, 200, { app: "noditos", version: 1 });
+      sendJson(res, 200, { app: "noditos", version: 1, build: BUILD_TAG });
       return;
     }
     if (pathname === "/__noditos/stop") {
@@ -196,31 +258,42 @@ function startServer(port) {
     }
 
     const relativeFile = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
-    let filePath = path.resolve(DIST_ROOT, relativeFile);
-    const insideDist = filePath === DIST_ROOT || filePath.startsWith(DIST_ROOT + path.sep);
-    if (!insideDist || pathname.includes("\0")) {
+    if (pathname.includes("\0") || relativeFile.split("/").includes("..")) {
       res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Prohibido");
       return;
     }
-    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-      filePath = path.join(DIST_ROOT, "index.html"); // SPA fallback
-    }
 
     try {
-      if (filePath.endsWith("index.html")) {
-        let html = fs.readFileSync(filePath, "utf8");
-        html = html.replace(TOKEN_PLACEHOLDER, TOKEN);
+      let servePath = relativeFile;
+      let buf = distBuffer(servePath);
+      if (!buf && servePath !== "index.html") {
+        servePath = "index.html"; // SPA fallback
+        buf = distBuffer(servePath);
+      }
+      if (!buf) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("No encontrado");
+        return;
+      }
+      if (servePath === "index.html") {
+        const html = buf.toString("utf8").replace(TOKEN_PLACEHOLDER, TOKEN);
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(html);
         return;
       }
-      const ext = path.extname(filePath).toLowerCase();
+      const ext = path.extname(servePath).toLowerCase();
       res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
-      fs.createReadStream(filePath).pipe(res);
+      res.end(buf);
     } catch {
-      res.writeHead(500);
-      res.end("Error interno");
+      // Nunca intentar escribir headers dos veces: un fallo tardío en el
+      // envío no debe tirar abajo el servidor con ERR_HTTP_HEADERS_SENT.
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Error interno");
+      } else {
+        res.end();
+      }
     }
   });
 
@@ -229,6 +302,7 @@ function startServer(port) {
     console.log("");
     console.log("  ==============================================");
     console.log("    NODITOS está en ejecución");
+    console.log(`    Versión:    Noditos ${BUILD_TAG}`);
     console.log("  ==============================================");
     console.log(`    App:        ${url}`);
     console.log(`    Registro:   ${LOG_PATH}`);
@@ -289,7 +363,7 @@ function tryRunning(ports, done) {
   });
 }
 
-log("Iniciando Noditos…");
+log(`Iniciando Noditos ${BUILD_TAG}…`);
 const requested = portArg();
 if (requested) {
   startServer(requested);
