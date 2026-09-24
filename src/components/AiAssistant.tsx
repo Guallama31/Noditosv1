@@ -403,66 +403,72 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
     return false;
   };
 
+  const buildFromReply = (
+    reply: string,
+    build: (reply: string) => Omit<ChatMsg, "id"> & { id?: string },
+    structured: boolean,
+  ) => {
+    const candidates = structured ? [reply, sanitizeFinalAnswer(reply)] : [sanitizeFinalAnswer(reply)];
+    let lastError: unknown = null;
+    for (const candidate of [...new Set(candidates.map((c) => c.trim()).filter(Boolean))]) {
+      try {
+        return build(candidate);
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError ?? new Error("No se pudo interpretar la respuesta.");
+  };
+
   const runWithRetry = async (
     userText: string,
     system: string,
     user: string,
     build: (reply: string) => Omit<ChatMsg, "id"> & { id?: string },
-    attempts = 2,
+    attempts = 3,
+    options: { structured?: boolean } = {},
   ) => {
     let last: string | null = null;
+    let lastProblem: "duplicated" | "parse" | null = null;
+    let nextSystem = system;
+    let nextUser = user;
 
     for (let attempt = 0; attempt < attempts; attempt++) {
-      const reply = await askAi(cfg, system, user);
+      const reply = await askAi(cfg, nextSystem, nextUser);
       last = reply;
-      if (!hasVisibleDuplication(reply)) {
-        const safeReply = sanitizeFinalAnswer(reply);
-        try {
-          const built = build(safeReply);
-          setMessages((m) => [...m, { ...built, id: built.id ?? uid() }]);
-          return;
-        } catch {
-          setMessages((m) => [
-            ...m,
-            {
-              id: uid(),
-              role: "assistant",
-              kind: "error",
-              text: "Recibí una respuesta, pero no pude interpretarla. Probá de nuevo.",
-            },
-          ]);
-          return;
+
+      if (hasVisibleDuplication(reply)) {
+        lastProblem = "duplicated";
+        if (attempt < attempts - 1) {
+          nextSystem =
+            system +
+            `\n\nIMPORTANTE: Tu respuesta anterior estaba duplicada o incluía texto interno. ` +
+            `Reescribí desde cero, sin repetir frases ni bloques, y entregá SOLO la respuesta final.`;
+          nextUser = user + `\n\nReintentá desde cero: la respuesta anterior estaba duplicada o tenía texto interno. No repitas nada.`;
+          continue;
         }
+        break;
       }
 
-      if (attempt < attempts - 1) {
-        // Reintento reforzado: pedimos una respuesta nueva y compacta, sin repetición.
-        const retrySystem =
-          system +
-          `\n\nIMPORTANTE: Tu respuesta anterior estaba duplicada. Reescribí la respuesta final desde cero, sin repetir ninguna frase ni bloque. ` +
-          `Entregá SOLO la respuesta final, compacta y no duplicada.`;
-        const retryUser = user + `\n\nLa respuesta anterior estaba duplicada. Reintentá desde cero y entregá solo la respuesta final, sin repetir texto ni ideas.`;
-        const retryReply = await askAi(cfg, retrySystem, retryUser);
-        last = retryReply;
-        if (!hasVisibleDuplication(retryReply)) {
-          const safeReply = sanitizeFinalAnswer(retryReply);
-          try {
-            const built = build(safeReply);
-            setMessages((m) => [...m, { ...built, id: built.id ?? uid() }]);
-            return;
-          } catch {
-            setMessages((m) => [
-              ...m,
-              {
-                id: uid(),
-                role: "assistant",
-                kind: "error",
-                text: "Recibí una respuesta, pero no pude interpretarla. Probá de nuevo.",
-              },
-            ]);
-            return;
-          }
+      try {
+        const built = buildFromReply(reply, build, Boolean(options.structured));
+        setMessages((m) => [...m, { ...built, id: built.id ?? uid() }]);
+        return;
+      } catch {
+        lastProblem = "parse";
+        if (attempt < attempts - 1) {
+          nextSystem =
+            system +
+            `\n\nIMPORTANTE: La respuesta anterior no se pudo interpretar. ` +
+            `Respondé otra vez usando EXACTAMENTE el formato pedido, con todos los elementos completos. ` +
+            `No uses markdown ni texto extra. Si el formato es JSON, debe ser JSON válido, cerrado y sin frases cortadas.`;
+          nextUser =
+            user +
+            `\n\nTu respuesta anterior no pudo interpretarse o quedó incompleta. ` +
+            `Reintentá con el formato pedido, sin cortar frases y sin texto adicional.`;
+          continue;
         }
+        break;
       }
     }
 
@@ -472,9 +478,12 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
         id: uid(),
         role: "assistant",
         kind: "error",
-        text: last
-          ? "La respuesta estaba duplicada y no pude obtener una versión válida. Probá nuevamente."
-          : "No pude obtener una respuesta válida. Probá nuevamente.",
+        text:
+          lastProblem === "parse"
+            ? "Recibí una respuesta, pero no pude interpretarla completa. Probá de nuevo o cambiá de modelo."
+            : last
+              ? "La respuesta estaba duplicada o incompleta y no pude obtener una versión válida. Probá nuevamente."
+              : "No pude obtener una respuesta válida. Probá nuevamente.",
       },
     ]);
   };
@@ -484,11 +493,12 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
     system: string,
     user: string,
     build: (reply: string) => Omit<ChatMsg, "id"> & { id?: string },
+    options: { structured?: boolean } = {},
   ) => {
     push({ role: "user", text: userText });
     setBusy(true);
     try {
-      await runWithRetry(userText, system, user, build, 2);
+      await runWithRetry(userText, system, user, build, 3, options);
     } catch (err) {
       setMessages((m) => [
         ...m,
@@ -533,6 +543,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
           text: `Estas ideas podrían colgar de «${selLabel}». Tocá las que quieras y añadilas:`,
         };
       },
+      { structured: true },
     );
   };
 
@@ -583,6 +594,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
           selectedNode ? selLabel : api.root.text.trim() || "Idea central"
         }»?`,
       }),
+      { structured: true },
     );
     setMode("chat");
   };
@@ -657,6 +669,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
         questions: parseQA(reply),
         text: `Preguntas de estudio sobre «${label}»:`,
       }),
+      { structured: true },
     );
   };
 
@@ -696,6 +709,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
           language: lang,
           text: `Traducción de «${label}» al ${lang}:`,
         }),
+        { structured: true },
       );
       return;
     }
@@ -721,6 +735,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
         language: lang,
         text: `Traducción de «${label}» y sus subnodos al ${lang}:`,
       }),
+      { structured: true },
     );
   };
 
@@ -749,6 +764,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
           text: `Orden sugerido por prioridad para «${selLabel}»:`,
         };
       },
+      { structured: true },
     );
   };
 
@@ -763,7 +779,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
         `Sé directo, honesto y constructivo; no inventes datos ajenos. ` +
         `NO muestres tu proceso de análisis ni pasos de pensamiento; entrega solo la crítica final. ` +
         `No repitas puntos ni frases idénticas.\n` +
-        `FORMATO: responde SOLO con un array JSON de strings breves, por ejemplo ["Falta evidencia","Supuesto no validado"]. Sin texto extra, sin markdown.`,
+        `FORMATO: responde SOLO con un array JSON de strings breves y completos, por ejemplo ["Falta evidencia concreta","Supuesto no validado"]. Cada string debe cerrar la idea, sin frases cortadas. Sin texto extra, sin markdown.`,
       `Rama a analizar:\n${mapToCompactText(target)}`,
       (reply) => ({
         role: "assistant",
@@ -771,6 +787,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
         points: parseSuggestionList(reply),
         text: `Puntos críticos de «${label}»:`,
       }),
+      { structured: true },
     );
   };
 
@@ -809,6 +826,7 @@ export const AiAssistant = forwardRef<AiAssistantHandle, {
               : `Encontré ${idxGroups.length} grupo${idxGroups.length === 1 ? "" : "s"} de posibles duplicados:`,
         };
       },
+      { structured: true },
     );
   };
 

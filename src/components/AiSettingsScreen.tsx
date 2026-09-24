@@ -10,13 +10,17 @@ import {
   Wand2,
 } from "lucide-react";
 import {
+  activeModelId,
   askAi,
   defaultAiConfig,
   fetchProviderModels,
   isAiConfigured,
   loadAiConfig,
+  providerApiKey,
   PROVIDERS,
   saveAiConfig,
+  withActiveModel,
+  withProviderApiKey,
   type AiConfig,
   type AiProvider,
   type FetchedModel,
@@ -37,23 +41,18 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
   const provider = PROVIDERS.find((p) => p.id === cfg.provider)!;
 
   const configured = isAiConfigured(cfg);
-  const currentModelId =
-    cfg.provider === "gemini"
-      ? cfg.geminiModel
-      : cfg.provider === "openai"
-        ? cfg.openaiModel
-        : cfg.provider === "groq"
-          ? cfg.groqModel
-          : cfg.ollamaModel;
+  const currentModelId = activeModelId(cfg);
+  const currentApiKey = providerApiKey(cfg);
 
   const refreshModels = useCallback(async () => {
+    const providerAtRequest = cfg.provider;
     setModels({ status: "loading" });
     try {
       const list = await fetchProviderModels(cfg);
       setModels({ status: "done", models: list });
       // Si el modelo actual ya no existe en la lista, elegimos el primero.
       if (list.length > 0 && !list.some((m) => m.id === currentModelId)) {
-        setCfg((c) => ({ ...c, [modelKeyFor(c.provider)]: list[0].id }) as AiConfig);
+        setCfg((c) => (c.provider === providerAtRequest ? withActiveModel(c, list[0].id, providerAtRequest) : c));
       }
     } catch (err) {
       setModels({ status: "error", message: err instanceof Error ? err.message : "No se pudieron consultar los modelos." });
@@ -70,7 +69,7 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
   }, [cfg.provider]);
 
   const pickModel = (id: string) => {
-    setCfg((c) => ({ ...c, [modelKeyFor(c.provider)]: id }) as AiConfig);
+    setCfg((c) => withActiveModel(c, id));
   };
 
   const testConnection = async () => {
@@ -99,7 +98,7 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
       <div className="wash wash-a" style={{ width: 520, height: 520, left: "-8%", top: "-12%", background: "rgba(120,124,138,0.10)" }} />
       <div className="wash wash-b" style={{ width: 560, height: 560, right: "-10%", bottom: "-16%", background: "rgba(140,136,150,0.08)" }} />
 
-      <div className="relative mx-auto max-w-2xl px-6 pb-16 pt-8">
+      <div className="relative mx-auto max-w-3xl px-6 pb-16 pt-8">
         <button
           onClick={onBack}
           className="card-in flex items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-3 py-1.5 text-[12.5px] font-bold text-ink-500 shadow-sm transition hover:text-ink-800"
@@ -125,13 +124,19 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
         </p>
 
         {/* proveedores */}
-        <div className="card-in mt-5 grid grid-cols-2 gap-2.5 sm:grid-cols-4" style={{ animationDelay: "120ms" }}>
+        <div className="card-in mt-5 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4" style={{ animationDelay: "120ms" }}>
           {PROVIDERS.map((p) => {
             const active = cfg.provider === p.id;
             return (
               <button
                 key={p.id}
-                onClick={() => setCfg((c) => ({ ...c, provider: p.id as AiProvider }))}
+                onClick={() =>
+                  setCfg((c) => {
+                    const providerId = p.id as AiProvider;
+                    const next = { ...c, provider: providerId };
+                    return { ...next, apiKey: providerApiKey(next, providerId) };
+                  })
+                }
                 className={`rounded-xl border-2 p-3 text-left transition active:translate-y-px ${
                   active
                     ? "border-brand bg-white shadow-md"
@@ -161,9 +166,9 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
               <div className="mt-2 flex gap-2">
                 <input
                   type={showKey ? "text" : "password"}
-                  value={cfg.apiKey}
-                  onChange={(e) => setCfg((c) => ({ ...c, apiKey: e.target.value }))}
-                  placeholder={provider.id === "gemini" ? "AIza…" : "sk-…"}
+                  value={currentApiKey}
+                  onChange={(e) => setCfg((c) => withProviderApiKey(c, e.target.value))}
+                  placeholder={provider.keyPlaceholder ?? "sk-…"}
                   className={inputCls}
                   autoComplete="off"
                   spellCheck={false}
@@ -194,7 +199,7 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
                   rel="noopener noreferrer"
                   className="mt-2 inline-block text-[12px] font-semibold text-brand underline decoration-dotted underline-offset-2 hover:text-[#8c3220]"
                 >
-                  Conseguir una clave gratis en {provider.name} →
+                  Conseguir una clave en {provider.name} →
                 </a>
               )}
             </>
@@ -221,6 +226,23 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
               </p>
             </>
           )}
+
+          <div className="mt-5">
+            <label className="text-[11px] font-bold uppercase tracking-[0.14em] text-ink-400">
+              Modelo seleccionado
+            </label>
+            <input
+              type="text"
+              value={currentModelId}
+              onChange={(e) => pickModel(e.target.value)}
+              placeholder="ID del modelo"
+              className={`${inputCls} mt-2 font-mono text-[12.5px]`}
+              spellCheck={false}
+            />
+            <p className="mt-1.5 text-[11.5px] leading-snug text-ink-400">
+              Podés escribir el ID manualmente o elegirlo de la lista consultada al proveedor.
+            </p>
+          </div>
 
           {/* modelos en vivo */}
           <div className="mt-5">
@@ -290,7 +312,7 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
               </>
             )}
             {models.status === "idle" && (
-              <p className="mt-3 text-[12px] text-ink-400">Escribí tu clave y los modelos aparecerán acá.</p>
+              <p className="mt-3 text-[12px] text-ink-400">Escribí tu clave o conectá el proveedor para consultar modelos.</p>
             )}
           </div>
 
@@ -341,13 +363,4 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
       </div>
     </div>
   );
-}
-
-function modelKeyFor(p: AiProvider): "geminiModel" | "openaiModel" | "groqModel" | "ollamaModel" {
-  switch (p) {
-    case "gemini": return "geminiModel";
-    case "openai": return "openaiModel";
-    case "groq": return "groqModel";
-    case "ollama": return "ollamaModel";
-  }
 }
