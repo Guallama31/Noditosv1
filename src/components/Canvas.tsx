@@ -49,6 +49,7 @@ import {
 } from "./CanvasLayers";
 
 const MAX_ZOOM = 1.5;
+type RenderStrategy = "viewport" | "screen";
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 
 export const NODE_KINDS: Array<{ id: NodeKind; label: string; hint: string; icon: React.ReactNode; key: string }> = [
@@ -378,6 +379,9 @@ export function Canvas({
   const panRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const [fontTick, setFontTick] = useState(0);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [renderStrategy, setRenderStrategy] = useState<RenderStrategy>("viewport");
+  const [renderMetrics, setRenderMetrics] = useState({ fps: 0, layoutMs: 0, longTasks: 0, visibleNodes: 0 });
+  const metricRef = useRef({ frames: 0, layoutMs: 0, longTasks: 0 });
 
   useEffect(() => {
     const el = wrapperRef.current;
@@ -392,11 +396,50 @@ export function Canvas({
     return () => observer?.disconnect();
   }, []);
 
-  const layout = useMemo(
-    () => computeLayout(api.root),
+  // Instrumentación ligera para comparar estrategias sin introducir un loop
+  // de renderizado propio: contamos frames mientras cambia la cámara y
+  // registramos long tasks del navegador como aproximación al coste de CPU.
+  useEffect(() => {
+    let raf = 0;
+    let last = { ...viewRef.current };
+    let lastReport = performance.now();
+    const tick = (now: number) => {
+      const current = viewRef.current;
+      if (current.scale !== last.scale || current.tx !== last.tx || current.ty !== last.ty) {
+        metricRef.current.frames += 1;
+        last = { ...current };
+      }
+      if (now - lastReport >= 500) {
+        const elapsed = now - lastReport;
+        setRenderMetrics((m) => ({
+          fps: Math.round((metricRef.current.frames * 1000) / elapsed),
+          layoutMs: metricRef.current.layoutMs,
+          longTasks: metricRef.current.longTasks,
+          visibleNodes: m.visibleNodes,
+        }));
+        metricRef.current.frames = 0;
+        lastReport = now;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    const observer = typeof PerformanceObserver !== "undefined" ? new PerformanceObserver((entries) => {
+      metricRef.current.longTasks += entries.getEntries().length;
+    }) : null;
+    try { observer?.observe({ type: "longtask", buffered: true }); } catch { /* no disponible en todos los navegadores */ }
+    return () => {
+      cancelAnimationFrame(raf);
+      observer?.disconnect();
+    };
+  }, []);
+
+  const layout = useMemo(() => {
+    const started = performance.now();
+    const result = computeLayout(api.root);
+    metricRef.current.layoutMs = Math.round((performance.now() - started) * 100) / 100;
+    return result;
     // fontTick fuerza a re-medir cuando cargan las fuentes web
-    [api.root, fontTick],
-  );
+  }, [api.root, fontTick]);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const apiRef = useRef(api);
@@ -1012,6 +1055,10 @@ export function Canvas({
     }
     return result;
   }, [displayBoxes, api.selectedId, dragIds, visibleWorld]);
+  useEffect(() => {
+    setRenderMetrics((m) => ({ ...m, visibleNodes: visibleBoxes.size }));
+  }, [visibleBoxes.size, renderStrategy]);
+
   const activeBox = api.selectedId ? displayBoxes.get(api.selectedId) : undefined;
   const activeTopLeft = activeBox
     ? worldToScreen({ x: activeBox.cx - activeBox.w / 2, y: activeBox.cy - activeBox.h / 2 }, view)
@@ -1025,6 +1072,17 @@ export function Canvas({
         scale: view.scale,
       }
     : undefined;
+  const screenGeometry = useCallback((box: NodeBox) => {
+    const topLeft = worldToScreen({ x: box.cx - box.w / 2, y: box.cy - box.h / 2 }, view);
+    return {
+      left: topLeft.x,
+      top: topLeft.y,
+      width: box.w * view.scale,
+      height: box.h * view.scale,
+      scale: view.scale,
+    };
+  }, [view]);
+
   const manualCount = useMemo(() => {
     let c = 0;
     const walk = (n: MindNode) => {
@@ -1150,7 +1208,7 @@ export function Canvas({
           </CanvasEdges>
 
           <CanvasNodes>
-          {[...visibleBoxes.values()].map((box) => {
+          {renderStrategy === "viewport" && [...visibleBoxes.values()].map((box) => {
             // El nodo activo se pinta en el overlay de pantalla para que el
             // navegador rasterice su texto al tamaño final, no como textura
             // ampliada del viewport completo.
@@ -1192,7 +1250,38 @@ export function Canvas({
       {/* Overlay del nodo activo: evita ampliar una textura del viewport y
           conserva edición, links y controles HTML nativos. */}
       <CanvasInteractionOverlay>
-      {activeBox && activeScreen && (() => {
+      {renderStrategy === "screen" && [...visibleBoxes.values()].map((box) => {
+        const node = nodeById.get(box.id);
+        if (!node) return null;
+        return (
+          <NodeView
+            key={`screen-${box.id}`}
+            node={node}
+            box={box}
+            minX={0}
+            minY={0}
+            selected={api.selectedId === box.id}
+            editing={api.editingId === box.id}
+            dimmed={false}
+            isTarget={drag?.over === box.id}
+            searchMatch={searchMatchIds?.has(box.id)}
+            onPointerDown={onNodePointerDown}
+            onPointerMove={onNodePointerMove}
+            onPointerUp={onNodePointerUp}
+            onLostCapture={onLostCapture}
+            onDoubleClick={onNodeDoubleClick}
+            onToggleCollapse={onNodeToggleCollapse}
+            onCommit={onNodeCommit}
+            onCancel={onNodeCancel}
+            onTab={openPicker}
+            onRequestImage={onRequestImageRef.current}
+            onFontChange={onFontChange}
+            screen={screenGeometry(box)}
+            lowDetail={lowDetail}
+          />
+        );
+      })}
+      {renderStrategy === "viewport" && activeBox && activeScreen && (() => {
         const node = nodeById.get(activeBox.id);
         if (!node) return null;
         return (
@@ -1257,6 +1346,15 @@ export function Canvas({
         <span>{totalNodes} nodos</span>
         <span className="text-ink-300">·</span>
         <span>{depth} niveles</span>
+        <span className="text-ink-300">·</span>
+        <button
+          onClick={() => setRenderStrategy((mode) => mode === "viewport" ? "screen" : "viewport")}
+          title="Comparar renderizado: viewport transformado frente a nodos posicionados en pantalla"
+          className="rounded-md border border-ink-200 bg-white px-1.5 py-0.5 text-[10px] font-bold text-ink-600 transition hover:border-brand hover:text-brand"
+        >
+          {renderStrategy === "viewport" ? "Render: viewport" : "Render: pantalla"}
+        </button>
+        <span className="text-ink-400" title="FPS de cámara, tiempo de layout y long tasks del navegador">{renderMetrics.fps} fps · {renderMetrics.layoutMs} ms · {renderMetrics.visibleNodes} visibles · {renderMetrics.longTasks} tareas</span>
         {manualCount > 0 && (
           <>
             <span className="text-ink-300">·</span>
