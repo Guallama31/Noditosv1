@@ -25,7 +25,23 @@ export function CanvasViewportLayer({ children, className, style }: {
   return <div className={className} style={style}>{children}</div>;
 }
 
+/** SVG edge layer. Its contents share the viewport coordinate system. */
+export function CanvasEdges({ children }: { children: ReactNode }) {
+  return <div data-canvas-layer="edges" className="absolute inset-0">{children}</div>;
+}
+
+/** HTML node layer. Keeping this boundary explicit makes future culling and
+ * screen-space nodes independent from the edge renderer. */
+export function CanvasNodes({ children }: { children: ReactNode }) {
+  return <div data-canvas-layer="nodes" className="absolute inset-0">{children}</div>;
+}
+
 /** UI mounted above the transformed scene, never affected by camera zoom. */
 export function CanvasInteractionOverlay({ children }: { children: ReactNode }) {
-  return <div className="pointer-events-none absolute inset-0 z-10">{children}</div>;
+  return <div data-canvas-layer="interaction" className="pointer-events-none absolute inset-0 z-10">{children}</div>;
+}
+
+/** Controls and status never inherit the camera transform. */
+export function CanvasControls({ children }: { children: ReactNode }) {
+  return <div data-canvas-layer="controls">{children}</div>;
 }

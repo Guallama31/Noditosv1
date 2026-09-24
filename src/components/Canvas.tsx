@@ -35,11 +35,18 @@ import {
 import { parsePastedHtml, parsePastedText } from "../lib/paste";
 import { fileToNodeImage, isProbablyImageUrl, urlToNodeImage } from "../lib/image";
 import { ensureFonts } from "../lib/fonts";
-import { screenRectToWorld, worldToScreen, zoomAtPoint, type Camera } from "../lib/camera";
+import { screenRectToWorld, screenToWorld, worldToScreen, zoomAtPoint, type Camera } from "../lib/camera";
 import { openUrl } from "../lib/links";
 import { LinkText } from "./LinkText";
 import { FontToolbar } from "./FontToolbar";
-import { CanvasBackground, CanvasViewportLayer } from "./CanvasLayers";
+import {
+  CanvasBackground,
+  CanvasControls,
+  CanvasEdges,
+  CanvasInteractionOverlay,
+  CanvasNodes,
+  CanvasViewportLayer,
+} from "./CanvasLayers";
 
 const MAX_ZOOM = 1.5;
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -174,6 +181,7 @@ const NodeView = memo(function NodeView({
         width: screen?.width ?? box.w,
         height: screen?.height ?? box.h,
         zIndex: selected ? 20 : d === 0 ? 10 : 5,
+        pointerEvents: screen ? "auto" : undefined,
       }}
     >
       <div
@@ -807,19 +815,23 @@ export function Canvas({
   /* ---------- handlers de nodo (estables) ---------- */
   const hitTest = (dragRect: { left: number; right: number; top: number; bottom: number }, excludeId: string): string | null => {
     const dragNode = findNode(apiRef.current.root, excludeId);
-    const dragArea = (dragRect.right - dragRect.left) * (dragRect.bottom - dragRect.top);
+    const camera = viewRef.current;
+    const dragTopLeft = worldToScreen({ x: dragRect.left, y: dragRect.top }, camera);
+    const dragBottomRight = worldToScreen({ x: dragRect.right, y: dragRect.bottom }, camera);
+    const dragArea = (dragBottomRight.x - dragTopLeft.x) * (dragBottomRight.y - dragTopLeft.y);
     let best: string | null = null;
     let bestArea = 0;
     for (const box of layoutRef.current.boxes.values()) {
       if (box.id === excludeId) continue;
       if (dragNode && isDescendant(dragNode, box.id)) continue;
       const pad = 6;
-      const left = box.cx - box.w / 2 - pad;
-      const right = box.cx + box.w / 2 + pad;
-      const top = box.cy - box.h / 2 - pad;
-      const bottom = box.cy + box.h / 2 + pad;
-      const overlapW = Math.min(dragRect.right, right) - Math.max(dragRect.left, left);
-      const overlapH = Math.min(dragRect.bottom, bottom) - Math.max(dragRect.top, top);
+      const center = worldToScreen({ x: box.cx, y: box.cy }, camera);
+      const left = center.x - (box.w / 2 + pad) * camera.scale;
+      const right = center.x + (box.w / 2 + pad) * camera.scale;
+      const top = center.y - (box.h / 2 + pad) * camera.scale;
+      const bottom = center.y + (box.h / 2 + pad) * camera.scale;
+      const overlapW = Math.min(dragBottomRight.x, right) - Math.max(dragTopLeft.x, left);
+      const overlapH = Math.min(dragBottomRight.y, bottom) - Math.max(dragTopLeft.y, top);
       if (overlapW <= 0 || overlapH <= 0) continue;
       const area = overlapW * overlapH;
       const boxArea = (right - left) * (bottom - top);
@@ -871,9 +883,13 @@ export function Canvas({
       apiRef.current.select(d.id);
     }
     const v = viewRef.current;
-    const zoomSensitivity = 0.85 / Math.max(v.scale, 0.35);
-    const dx = (e.clientX - d.startX) * zoomSensitivity;
-    const dy = (e.clientY - d.startY) * zoomSensitivity;
+    const canvasRect = wrapperRef.current?.getBoundingClientRect();
+    const originX = canvasRect?.left ?? 0;
+    const originY = canvasRect?.top ?? 0;
+    const startWorld = screenToWorld({ x: d.startX - originX, y: d.startY - originY }, v);
+    const currentWorld = screenToWorld({ x: e.clientX - originX, y: e.clientY - originY }, v);
+    const dx = currentWorld.x - startWorld.x;
+    const dy = currentWorld.y - startWorld.y;
     const rect = draggedRect(d.id, dx, dy);
     const over = rect ? hitTest(rect, d.id) : null;
     d.dx = dx;
@@ -997,10 +1013,13 @@ export function Canvas({
     return result;
   }, [displayBoxes, api.selectedId, dragIds, visibleWorld]);
   const activeBox = api.selectedId ? displayBoxes.get(api.selectedId) : undefined;
-  const activeScreen = activeBox
+  const activeTopLeft = activeBox
+    ? worldToScreen({ x: activeBox.cx - activeBox.w / 2, y: activeBox.cy - activeBox.h / 2 }, view)
+    : undefined;
+  const activeScreen = activeBox && activeTopLeft
     ? {
-        left: view.tx + (activeBox.cx - activeBox.w / 2) * view.scale,
-        top: view.ty + (activeBox.cy - activeBox.h / 2) * view.scale,
+        left: activeTopLeft.x,
+        top: activeTopLeft.y,
         width: activeBox.w * view.scale,
         height: activeBox.h * view.scale,
         scale: view.scale,
@@ -1070,6 +1089,7 @@ export function Canvas({
         }}
       >
         <div style={{ position: "absolute", left: bounds.minX, top: bounds.minY, width: bw, height: bh }}>
+          <CanvasEdges>
           <svg
             className="absolute left-0 top-0 overflow-visible"
             width={bw}
@@ -1127,7 +1147,9 @@ export function Canvas({
               }}
             />
           )}
+          </CanvasEdges>
 
+          <CanvasNodes>
           {[...visibleBoxes.values()].map((box) => {
             // El nodo activo se pinta en el overlay de pantalla para que el
             // navegador rasterice su texto al tamaño final, no como textura
@@ -1162,12 +1184,14 @@ export function Canvas({
               />
             );
           })}
+          </CanvasNodes>
 
         </div>
       </CanvasViewportLayer>
 
       {/* Overlay del nodo activo: evita ampliar una textura del viewport y
           conserva edición, links y controles HTML nativos. */}
+      <CanvasInteractionOverlay>
       {activeBox && activeScreen && (() => {
         const node = nodeById.get(activeBox.id);
         if (!node) return null;
@@ -1199,7 +1223,9 @@ export function Canvas({
           />
         );
       })()}
+      </CanvasInteractionOverlay>
 
+      <CanvasControls>
       {/* zoom */}
       <div
         className="absolute right-3 top-3 z-20 flex flex-col items-center gap-0.5 rounded-lg border border-ink-200/80 bg-white/95 p-0.5 shadow-sm"
@@ -1250,8 +1276,7 @@ export function Canvas({
           </>
         )}
       </div>
-
-
+      </CanvasControls>
 
       {/* fantasma del nodo en arrastre */}
       {drag && drag.over && (
@@ -1271,8 +1296,9 @@ export function Canvas({
           const box = layout.boxes.get(picker);
           if (!box) return null;
           const el = wrapperRef.current?.getBoundingClientRect();
-          const x = (el?.left ?? 0) + box.cx * view.scale + view.tx;
-          const y = (el?.top ?? 0) + (box.cy + box.h / 2) * view.scale + view.ty;
+          const anchor = worldToScreen({ x: box.cx, y: box.cy + box.h / 2 }, view);
+          const x = (el?.left ?? 0) + anchor.x;
+          const y = (el?.top ?? 0) + anchor.y;
           return <TypePicker x={x} y={y} onPick={(kind) => pickKind(picker, kind)} onClose={closePicker} />;
         })()}
     </div>
