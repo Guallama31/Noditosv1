@@ -35,9 +35,11 @@ import {
 import { parsePastedHtml, parsePastedText } from "../lib/paste";
 import { fileToNodeImage, isProbablyImageUrl, urlToNodeImage } from "../lib/image";
 import { ensureFonts } from "../lib/fonts";
+import { screenRectToWorld, worldToScreen, zoomAtPoint, type Camera } from "../lib/camera";
 import { openUrl } from "../lib/links";
 import { LinkText } from "./LinkText";
 import { FontToolbar } from "./FontToolbar";
+import { CanvasBackground, CanvasViewportLayer } from "./CanvasLayers";
 
 const MAX_ZOOM = 1.5;
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -114,6 +116,8 @@ interface NodeViewProps {
   onTab: (id: string) => void;
   onRequestImage: (id: string) => void;
   onFontChange: (id: string, font: NodeFont | null) => void;
+  screen?: { left: number; top: number; width: number; height: number; scale: number };
+  lowDetail?: boolean;
 }
 
 const NodeView = memo(function NodeView({
@@ -137,8 +141,11 @@ const NodeView = memo(function NodeView({
   onTab,
   onRequestImage,
   onFontChange,
+  screen,
+  lowDetail = false,
 }: NodeViewProps) {
   const d = box.depth;
+  const renderScale = screen?.scale ?? 1;
   const st = nodeStyle(box, selected, dimmed, d === 0 ? false : isTarget);
   const kind = box.kind;
   const color = box.color;
@@ -162,10 +169,10 @@ const NodeView = memo(function NodeView({
     <div
       className="absolute select-none"
       style={{
-        left: box.cx - box.w / 2 - minX,
-        top: box.cy - box.h / 2 - minY,
-        width: box.w,
-        height: box.h,
+        left: screen?.left ?? box.cx - box.w / 2 - minX,
+        top: screen?.top ?? box.cy - box.h / 2 - minY,
+        width: screen?.width ?? box.w,
+        height: screen?.height ?? box.h,
         zIndex: selected ? 20 : d === 0 ? 10 : 5,
       }}
     >
@@ -187,14 +194,14 @@ const NodeView = memo(function NodeView({
           borderRadius: d === 0 ? 16 : kind === "image" ? 12 : 10,
           color: st.textColor,
           fontWeight: ty.fontWeight,
-          fontSize: ty.fontSize,
-          lineHeight: `${ty.lineHeight}px`,
+          fontSize: ty.fontSize * renderScale,
+          lineHeight: `${ty.lineHeight * renderScale}px`,
           fontFamily: ty.fontFamily,
           fontStyle: ty.italic ? "italic" : undefined,
           boxShadow: searchMatch ? `${st.shadow}, 0 0 0 4px rgba(181,74,51,0.22)` : st.shadow,
           opacity: st.opacity,
           filter: selected ? "saturate(1.02)" : undefined,
-          padding: `${ty.padY}px ${ty.padX}px`,
+          padding: `${ty.padY * renderScale}px ${ty.padX * renderScale}px`,
           touchAction: "none",
         }}
       >
@@ -206,12 +213,12 @@ const NodeView = memo(function NodeView({
                 alt={node.image.alt || node.text.trim() || "Imagen del nodo"}
                 draggable={false}
                 className="rounded-lg object-cover"
-                style={{ width: img.w, height: img.h }}
+                style={{ width: img.w * renderScale, height: img.h * renderScale }}
               />
             ) : (
               <div
                 className="grid place-items-center rounded-lg border-2 border-dashed text-ink-300"
-                style={{ width: 200, height: 120, borderColor: withAlpha(color, 0.4) }}
+                style={{ width: 200 * renderScale, height: 120 * renderScale, borderColor: withAlpha(color, 0.4) }}
               >
                 <span className="flex flex-col items-center gap-1 text-[11px] font-semibold">
                   <ImageIcon size={20} />
@@ -244,7 +251,7 @@ const NodeView = memo(function NodeView({
           />
         )}
 
-        {box.hasNotes && !hasImage && (
+        {!lowDetail && box.hasNotes && !hasImage && (
           <span
             title="Tiene notas"
             className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full border-2 border-white bg-[#c08a2e] text-white shadow-sm"
@@ -355,13 +362,27 @@ export function Canvas({
   searchMatchIds,
 }: CanvasProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
-  const viewRef = useRef(view);
+  const [view, setView] = useState<Camera>({ scale: 1, tx: 0, ty: 0 });
+  const viewRef = useRef<Camera>(view);
   viewRef.current = view;
   const [animating, setAnimating] = useState(false);
   const [panning, setPanning] = useState(false);
   const panRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const [fontTick, setFontTick] = useState(0);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      setViewportSize({ width: rect.width, height: rect.height });
+    };
+    update();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    observer?.observe(el);
+    return () => observer?.disconnect();
+  }, []);
 
   const layout = useMemo(
     () => computeLayout(api.root),
@@ -484,7 +505,7 @@ export function Canvas({
     setView((v) => {
       const scale = clamp(v.scale * k, 0.2, MAX_ZOOM);
       const kk = scale / v.scale;
-      return { scale, tx: width / 2 - kk * (width / 2 - v.tx), ty: height / 2 - kk * (height / 2 - v.ty) };
+      return zoomAtPoint(v, { x: width / 2, y: height / 2 }, scale);
     });
   }, []);
 
@@ -523,8 +544,7 @@ export function Canvas({
         setAnimating(false);
         setView((v) => {
           const scale = clamp(v.scale * Math.exp(-ev.deltaY * 0.0013), 0.2, MAX_ZOOM);
-          const k = scale / v.scale;
-          return { scale, tx: mx - k * (mx - v.tx), ty: my - k * (my - v.ty) };
+          return zoomAtPoint(v, { x: mx, y: my }, scale);
         });
       });
     };
@@ -954,6 +974,38 @@ export function Canvas({
   const totalNodes = countNodes(api.root);
   const depth = maxDepth(api.root);
   const rootBox = layout.boxes.get(api.root.id);
+  const lowDetail = view.scale < 0.35;
+  const visibleWorld = useMemo(
+    () => screenRectToWorld(
+      { left: -900, top: -900, right: viewportSize.width + 900, bottom: viewportSize.height + 900 },
+      view,
+    ),
+    [view, viewportSize],
+  );
+  const visibleBoxes = useMemo(() => {
+    const result = new Map<string, NodeBox>();
+    for (const box of displayBoxes.values()) {
+      const visible =
+        box.id === api.selectedId ||
+        dragIds.has(box.id) ||
+        (box.cx + box.w / 2 >= visibleWorld.left &&
+          box.cx - box.w / 2 <= visibleWorld.right &&
+          box.cy + box.h / 2 >= visibleWorld.top &&
+          box.cy - box.h / 2 <= visibleWorld.bottom);
+      if (visible) result.set(box.id, box);
+    }
+    return result;
+  }, [displayBoxes, api.selectedId, dragIds, visibleWorld]);
+  const activeBox = api.selectedId ? displayBoxes.get(api.selectedId) : undefined;
+  const activeScreen = activeBox
+    ? {
+        left: view.tx + (activeBox.cx - activeBox.w / 2) * view.scale,
+        top: view.ty + (activeBox.cy - activeBox.h / 2) * view.scale,
+        width: activeBox.w * view.scale,
+        height: activeBox.h * view.scale,
+        scale: view.scale,
+      }
+    : undefined;
   const manualCount = useMemo(() => {
     let c = 0;
     const walk = (n: MindNode) => {
@@ -1001,10 +1053,9 @@ export function Canvas({
       onDragOver={onCanvasDragOver}
       onDrop={onCanvasDrop}
     >
-      <div className="wash wash-a" style={{ width: 640, height: 640, left: "-10%", top: "-15%", background: "rgba(120,124,138,0.10)" }} />
-      <div className="wash wash-b" style={{ width: 700, height: 700, right: "-12%", bottom: "-20%", background: "rgba(140,136,150,0.08)" }} />
+      <CanvasBackground />
 
-      <div
+      <CanvasViewportLayer
         className={animating ? "canvas-anim" : undefined}
         style={{
           position: "absolute",
@@ -1077,7 +1128,11 @@ export function Canvas({
             />
           )}
 
-          {[...displayBoxes.values()].map((box) => {
+          {[...visibleBoxes.values()].map((box) => {
+            // El nodo activo se pinta en el overlay de pantalla para que el
+            // navegador rasterice su texto al tamaño final, no como textura
+            // ampliada del viewport completo.
+            if (box.id === api.selectedId) return null;
             const node = nodeById.get(box.id);
             if (!node) return null;
             return (
@@ -1103,12 +1158,47 @@ export function Canvas({
                 onTab={openPicker}
                 onRequestImage={onRequestImageRef.current}
                 onFontChange={onFontChange}
+                lowDetail={lowDetail}
               />
             );
           })}
 
         </div>
-      </div>
+      </CanvasViewportLayer>
+
+      {/* Overlay del nodo activo: evita ampliar una textura del viewport y
+          conserva edición, links y controles HTML nativos. */}
+      {activeBox && activeScreen && (() => {
+        const node = nodeById.get(activeBox.id);
+        if (!node) return null;
+        return (
+          <NodeView
+            key={`active-${activeBox.id}`}
+            node={node}
+            box={activeBox}
+            minX={0}
+            minY={0}
+            selected
+            editing={api.editingId === activeBox.id}
+            dimmed={false}
+            isTarget={drag?.over === activeBox.id}
+            searchMatch={searchMatchIds?.has(activeBox.id)}
+            onPointerDown={onNodePointerDown}
+            onPointerMove={onNodePointerMove}
+            onPointerUp={onNodePointerUp}
+            onLostCapture={onLostCapture}
+            onDoubleClick={onNodeDoubleClick}
+            onToggleCollapse={onNodeToggleCollapse}
+            onCommit={onNodeCommit}
+            onCancel={onNodeCancel}
+            onTab={openPicker}
+            onRequestImage={onRequestImageRef.current}
+            onFontChange={onFontChange}
+            screen={activeScreen}
+            lowDetail={lowDetail}
+          />
+        );
+      })()}
 
       {/* zoom */}
       <div
