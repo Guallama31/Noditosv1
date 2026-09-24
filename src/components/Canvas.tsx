@@ -14,6 +14,7 @@ import {
 import type { MindNode, NodeFont, NodeImage, NodeKind, NotifyFn } from "../types";
 import type { MindMapApi } from "../hooks/useMindMap";
 import {
+  clearTextMeasurementCache,
   computeLayout,
   edgeAnchor,
   edgePath,
@@ -126,6 +127,7 @@ interface NodeViewProps {
   onFontChange: (id: string, font: NodeFont | null) => void;
   screen?: { left: number; top: number; width: number; height: number; scale: number };
   lowDetail?: boolean;
+  performanceMode?: boolean;
 }
 
 const NodeView = memo(function NodeView({
@@ -151,6 +153,7 @@ const NodeView = memo(function NodeView({
   onFontChange,
   screen,
   lowDetail = false,
+  performanceMode = false,
 }: NodeViewProps) {
   const d = box.depth;
   const renderScale = screen?.scale ?? 1;
@@ -191,7 +194,7 @@ const NodeView = memo(function NodeView({
         onPointerUp={onPointerUp}
         onLostPointerCapture={onLostCapture}
         onDoubleClick={(e) => onDoubleClick(e, box.id)}
-        className={`group relative flex h-full w-full flex-col justify-center transition-[box-shadow,opacity,border-color,filter] duration-150 ${
+        className={`group relative flex h-full w-full flex-col justify-center ${performanceMode ? "" : "transition-[box-shadow,opacity,border-color,filter] duration-150"} ${
           d === 0 ? "cursor-default" : "cursor-grab active:cursor-grabbing"
         }`}
         style={{
@@ -207,7 +210,7 @@ const NodeView = memo(function NodeView({
           lineHeight: `${ty.lineHeight * renderScale}px`,
           fontFamily: ty.fontFamily,
           fontStyle: ty.italic ? "italic" : undefined,
-          boxShadow: searchMatch ? `${st.shadow}, 0 0 0 4px rgba(181,74,51,0.22)` : st.shadow,
+          boxShadow: performanceMode ? "none" : searchMatch ? `${st.shadow}, 0 0 0 4px rgba(181,74,51,0.22)` : st.shadow,
           opacity: st.opacity,
           filter: selected ? "saturate(1.02)" : undefined,
           padding: `${ty.padY * renderScale}px ${ty.padX * renderScale}px`,
@@ -216,11 +219,12 @@ const NodeView = memo(function NodeView({
       >
         {hasImage ? (
           <div className="flex h-full w-full flex-col items-center justify-center gap-1.5">
-            {img && node.image ? (
+            {img && node.image && !lowDetail ? (
               <img
                 src={node.image.src}
                 alt={node.image.alt || node.text.trim() || "Imagen del nodo"}
                 draggable={false}
+                decoding="async"
                 className="rounded-lg object-cover"
                 style={{ width: img.w * renderScale, height: img.h * renderScale }}
               />
@@ -253,7 +257,7 @@ const NodeView = memo(function NodeView({
           ))
         )}
 
-        {kind === "title" && (
+        {kind === "title" && !lowDetail && (
           <span
             className="absolute bottom-[5px] left-1/2 h-[2.5px] w-2/3 -translate-x-1/2 rounded-full"
             style={{ background: color }}
@@ -473,8 +477,8 @@ export function Canvas({
 
   const onFontChange = useCallback((id: string, font: NodeFont | null) => {
     apiRef.current.setFont(id, font);
-    if (font) ensureFonts([font.family]).then(() => setFontTick((t) => t + 1));
-    else setFontTick((t) => t + 1);
+    if (font) ensureFonts([font.family]).then(() => { clearTextMeasurementCache(); setFontTick((t) => t + 1); });
+    else { clearTextMeasurementCache(); setFontTick((t) => t + 1); }
   }, []);
 
   const nodeById = useMemo(() => {
@@ -566,6 +570,7 @@ export function Canvas({
     let alive = true;
     document.fonts?.ready.then(() => {
       if (alive) {
+        clearTextMeasurementCache();
         setFontTick((t) => t + 1);
         requestAnimationFrame(() => fitRef.current(false));
       }
@@ -628,7 +633,7 @@ export function Canvas({
     if (!usedFamilies) return;
     let alive = true;
     ensureFonts(usedFamilies.split("|")).then(() => {
-      if (alive) setFontTick((t) => t + 1);
+      if (alive) { clearTextMeasurementCache(); setFontTick((t) => t + 1); }
     });
     return () => {
       alive = false;
@@ -1034,6 +1039,7 @@ export function Canvas({
   const depth = maxDepth(api.root);
   const rootBox = layout.boxes.get(api.root.id);
   const lowDetail = view.scale < 0.35;
+  const performanceMode = lowDetail || panning || !!drag || animating;
   const visibleWorld = useMemo(
     () => screenRectToWorld(
       { left: -900, top: -900, right: viewportSize.width + 900, bottom: viewportSize.height + 900 },
@@ -1093,29 +1099,58 @@ export function Canvas({
     return c;
   }, [api.root]);
 
-  const edgePaths = useMemo(
-    () =>
-      layout.edges.map((edge) => {
-        const from = displayBoxes.get(edge.fromId);
-        const to = displayBoxes.get(edge.toId);
-        if (!from || !to) return null;
-        const active = edge.toId === api.selectedId;
-        const detaching = preview !== null && edge.toId === preview.id;
-        return (
-          <path
-            key={edge.toId}
-            d={edgePath(from, to, bounds.minX, bounds.minY)}
-            fill="none"
-            stroke={edge.color}
-            strokeOpacity={detaching ? 0.22 : active ? 1 : 0.7}
-            strokeWidth={detaching ? 2 : active ? 3 : 2}
-            strokeLinecap="round"
-            className={`edge-path ${active && !detaching ? "edge-active" : ""}`}
-          />
-        );
-      }),
-    [layout, displayBoxes, api.selectedId, preview, bounds.minX, bounds.minY],
-  );
+  const visibleEdgeNodes = useMemo(() => {
+    const ids = new Set<string>();
+    for (const box of layout.boxes.values()) {
+      if (
+        box.id === api.selectedId ||
+        (box.cx + box.w / 2 >= visibleWorld.left &&
+          box.cx - box.w / 2 <= visibleWorld.right &&
+          box.cy + box.h / 2 >= visibleWorld.top &&
+          box.cy - box.h / 2 <= visibleWorld.bottom)
+      ) ids.add(box.id);
+    }
+    return ids;
+  }, [layout.boxes, api.selectedId, visibleWorld]);
+
+  // Los paths estáticos se calculan una sola vez por layout/viewport. Durante
+  // un drag solo se recalculan las uniones que tocan la rama desplazada.
+  const staticEdgePaths = useMemo(() => {
+    const paths = new Map<string, string>();
+    for (const edge of layout.edges) {
+      if (!visibleEdgeNodes.has(edge.fromId) && !visibleEdgeNodes.has(edge.toId)) continue;
+      const from = layout.boxes.get(edge.fromId);
+      const to = layout.boxes.get(edge.toId);
+      if (from && to) paths.set(edge.toId, edgePath(from, to, bounds.minX, bounds.minY));
+    }
+    return paths;
+  }, [layout.edges, layout.boxes, visibleEdgeNodes, bounds.minX, bounds.minY]);
+
+  const edgePaths = useMemo(() => layout.edges.map((edge) => {
+    if (!visibleEdgeNodes.has(edge.fromId) && !visibleEdgeNodes.has(edge.toId)) return null;
+    const moving = !!drag && (dragIds.has(edge.fromId) || dragIds.has(edge.toId));
+    const from = moving ? displayBoxes.get(edge.fromId) : layout.boxes.get(edge.fromId);
+    const to = moving ? displayBoxes.get(edge.toId) : layout.boxes.get(edge.toId);
+    if (!from || !to) return null;
+    const active = edge.toId === api.selectedId;
+    const detaching = preview !== null && edge.toId === preview.id;
+    const d = moving
+      ? edgePath(from, to, bounds.minX, bounds.minY)
+      : staticEdgePaths.get(edge.toId);
+    if (!d) return null;
+    return (
+      <path
+        key={edge.toId}
+        d={d}
+        fill="none"
+        stroke={edge.color}
+        strokeOpacity={detaching ? 0.22 : active ? 1 : 0.7}
+        strokeWidth={detaching ? 2 / view.scale : active ? 3 / view.scale : Math.max(1.25, Math.min(2.5, 2 / view.scale))}
+        strokeLinecap="round"
+        className={`edge-path ${active && !detaching && !performanceMode ? "edge-active" : ""}`}
+      />
+    );
+  }), [layout.edges, layout.boxes, visibleEdgeNodes, staticEdgePaths, displayBoxes, drag, dragIds, api.selectedId, preview, bounds.minX, bounds.minY, performanceMode, view.scale]);
 
   return (
     <div
@@ -1171,10 +1206,11 @@ export function Canvas({
                       stroke={from.color}
                       strokeOpacity={0.95}
                       strokeWidth={3}
+                      vectorEffect="non-scaling-stroke"
                       strokeLinecap="round"
                       className="edge-path edge-active"
                     />
-                    <circle cx={anchor.x - bounds.minX} cy={anchor.y - bounds.minY} r={5} fill={from.color} />
+                    <circle cx={anchor.x - bounds.minX} cy={anchor.y - bounds.minY} r={5} fill={from.color} vectorEffect="non-scaling-stroke" />
                     <circle
                       cx={anchor.x - bounds.minX}
                       cy={anchor.y - bounds.minY}
@@ -1182,6 +1218,7 @@ export function Canvas({
                       fill="none"
                       stroke={from.color}
                       strokeWidth={2}
+                      vectorEffect="non-scaling-stroke"
                       className="anchor-pulse"
                       style={{ transformOrigin: `${anchor.x - bounds.minX}px ${anchor.y - bounds.minY}px` }}
                     />
@@ -1239,6 +1276,7 @@ export function Canvas({
                 onRequestImage={onRequestImageRef.current}
                 onFontChange={onFontChange}
                 lowDetail={lowDetail}
+                performanceMode={performanceMode}
               />
             );
           })}
@@ -1278,6 +1316,7 @@ export function Canvas({
             onFontChange={onFontChange}
             screen={screenGeometry(box)}
             lowDetail={lowDetail}
+            performanceMode={performanceMode}
           />
         );
       })}
@@ -1309,6 +1348,7 @@ export function Canvas({
             onFontChange={onFontChange}
             screen={activeScreen}
             lowDetail={lowDetail}
+            performanceMode={performanceMode}
           />
         );
       })()}

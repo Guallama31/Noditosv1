@@ -64,6 +64,13 @@ function getMeasurer(): HTMLDivElement {
 }
 
 const wordWidthCache = new Map<string, number>();
+const lineWidthCache = new Map<string, number>();
+
+export function clearTextMeasurementCache() {
+  wordWidthCache.clear();
+  lineWidthCache.clear();
+}
+
 function wordWidth(word: string, font: string): number {
   const key = font + "\u0000" + word;
   let w = wordWidthCache.get(key);
@@ -78,10 +85,15 @@ function wordWidth(word: string, font: string): number {
 }
 
 function domLineWidth(line: string, font: string): number {
+  const key = font + "\u0000" + line;
+  const cached = lineWidthCache.get(key);
+  if (cached !== undefined) return cached;
   const el = getMeasurer();
   el.style.font = font;
   el.textContent = line;
-  return el.getBoundingClientRect().width;
+  const width = el.getBoundingClientRect().width;
+  lineWidthCache.set(key, width);
+  return width;
 }
 
 /** Ancho del borde del nodo en su estado base (hay que descontarlo del contenido). */
@@ -363,10 +375,9 @@ function assignSides(children: MindNode[], mode: LayoutMode | "flow", dir: Side)
 }
 
 export function computeLayout(root: MindNode): LayoutResult {
-  // La caché de anchos de palabra es válida solo dentro de un cálculo: al
-  // empezar uno nuevo se limpia, de modo que si una fuente web terminó de
-  // cargar entre medio, el texto se remida con la tipografía real.
-  wordWidthCache.clear();
+  // Las cachés están indexadas por la cadena de fuente completa. Se conservan
+  // entre layouts para que pan/zoom no vuelvan a medir las mismas palabras;
+  // fontTick cambia la fuente efectiva cuando termina de cargar una webfont.
   const boxes = new Map<string, NodeBox>();
   const edges: Edge[] = [];
   const mCache = new Map<string, ReturnType<typeof measure>>();
