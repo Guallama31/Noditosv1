@@ -142,7 +142,7 @@ function MapCard({
   );
 }
 
-/** Acceso a la configuración del Ayudante IA, con estado visible. */
+/** Acceso a la configuración del Ayudante IA: chip discreto, con estado visible. */
 function AiSettingsButton({ onOpen }: { onOpen: () => void }) {
   const cfg = loadAiConfig();
   const configured = isAiConfigured(cfg);
@@ -152,29 +152,15 @@ function AiSettingsButton({ onOpen }: { onOpen: () => void }) {
     <button
       onClick={onOpen}
       title={configured ? `Ayudante IA conectado a ${provider?.name ?? cfg.provider}` : "Configurar el Ayudante IA"}
-      className={`group flex w-full items-center justify-between gap-2 rounded-lg border px-3.5 py-2 text-[13px] font-semibold shadow-sm transition active:translate-y-px ${
+      className={`group flex items-center gap-1.5 self-center rounded-lg border px-2 py-1 text-[11px] font-semibold transition active:translate-y-px ${
         configured
-          ? "border-teal-brand/30 bg-teal-brand/10 text-teal-brand hover:bg-teal-brand/15"
-          : "border-ink-200 bg-white text-ink-600 hover:border-ink-300 hover:bg-ink-50"
+          ? "border-teal-brand/25 bg-teal-brand/5 text-teal-brand hover:bg-teal-brand/10"
+          : "border-ink-200 bg-white/70 text-ink-400 hover:border-ink-300 hover:bg-white hover:text-ink-600"
       }`}
     >
-      <span className="flex items-center gap-2">
-        <Sparkles size={15} className={configured ? "text-teal-brand" : "text-brand transition group-hover:rotate-12"} />
-        Ayudante IA
-      </span>
-      <span className="flex items-center gap-1.5 text-[11px] font-bold">
-        {configured ? (
-          <>
-            <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-ok" />
-            {provider?.name ?? cfg.provider}
-          </>
-        ) : (
-          <>
-            <span className="h-1.5 w-1.5 rounded-full bg-[#c08a2e]" />
-            Sin configurar
-          </>
-        )}
-      </span>
+      <Sparkles size={12} className={configured ? "text-teal-brand" : "text-ink-400 transition group-hover:rotate-12 group-hover:text-brand"} />
+      Ayudante IA
+      <span className={`h-1.5 w-1.5 rounded-full ${configured ? "pulse-dot bg-ok" : "bg-[#c08a2e]"}`} />
     </button>
   );
 }
@@ -241,61 +227,59 @@ export function LibraryScreen({
               </div>
             </div>
 
-            {/* acciones + Ayudante IA debajo, alineados a la derecha */}
-            <div className="flex flex-col items-stretch gap-2.5">
-              <div className="flex flex-wrap items-center justify-end gap-2.5">
-                <button
-                  onClick={() => fileRef.current?.click()}
-                  className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3.5 py-2.5 text-[13px] font-semibold text-ink-600 shadow-sm transition hover:border-ink-300 hover:bg-ink-50 active:translate-y-px"
-                >
-                  <Upload size={15} />
-                  Importar mapa
-                </button>
-                <button
-                  onClick={onExportBackup}
-                  className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3.5 py-2.5 text-[13px] font-semibold text-ink-600 shadow-sm transition hover:border-ink-300 hover:bg-ink-50 active:translate-y-px"
-                >
-                  <Download size={15} />
-                  Backup
-                </button>
-                <button
-                  onClick={() => backupRef.current?.click()}
-                  className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3.5 py-2.5 text-[13px] font-semibold text-ink-600 shadow-sm transition hover:border-ink-300 hover:bg-ink-50 active:translate-y-px"
-                >
-                  <Upload size={15} />
-                  Restaurar
-                </button>
-                <button
-                  onClick={onOpenTemplates}
-                  className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3.5 py-2.5 text-[13px] font-semibold text-ink-600 shadow-sm transition hover:border-ink-300 hover:bg-ink-50 active:translate-y-px"
-                >
-                  <LayoutTemplate size={15} />
-                  Plantillas
-                </button>
-                <button
-                  onClick={onCreate}
-                  className="flex items-center gap-2 rounded-lg bg-ink-800 px-4 py-2.5 text-[13px] font-bold text-white shadow-md shadow-ink-900/20 transition hover:bg-ink-700 active:translate-y-px"
-                >
-                  <FilePlus2 size={15} />
-                  Nuevo mapa
-                </button>
-              </div>
+            {/* acciones: el Ayudante IA queda como chip discreto al final de la fila */}
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-[13px] font-semibold text-ink-600 shadow-sm transition hover:border-ink-300 hover:bg-ink-50 active:translate-y-px"
+              >
+                <Upload size={15} />
+                Importar mapa
+              </button>
+              <button
+                onClick={onExportBackup}
+                className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-[13px] font-semibold text-ink-600 shadow-sm transition hover:border-ink-300 hover:bg-ink-50 active:translate-y-px"
+              >
+                <Download size={15} />
+                Backup
+              </button>
+              <button
+                onClick={() => backupRef.current?.click()}
+                className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-[13px] font-semibold text-ink-600 shadow-sm transition hover:border-ink-300 hover:bg-ink-50 active:translate-y-px"
+              >
+                <Upload size={15} />
+                Restaurar
+              </button>
+              <button
+                onClick={onOpenTemplates}
+                className="flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-[13px] font-semibold text-ink-600 shadow-sm transition hover:border-ink-300 hover:bg-ink-50 active:translate-y-px"
+              >
+                <LayoutTemplate size={15} />
+                Plantillas
+              </button>
+              <button
+                onClick={onCreate}
+                className="flex items-center gap-2 rounded-lg bg-ink-800 px-3.5 py-2.5 text-[13px] font-bold text-white shadow-md shadow-ink-900/20 transition hover:bg-ink-700 active:translate-y-px"
+              >
+                <FilePlus2 size={15} />
+                Nuevo mapa
+              </button>
               <AiSettingsButton onOpen={onOpenAiSettings} />
             </div>
           </div>
 
           {canStop && (
-            <div className="mt-3 flex flex-wrap items-center gap-2.5">
+            <div className="mt-3 flex flex-wrap items-center justify-end gap-2.5">
               <button
                 onClick={onRequestStop}
                 disabled={stopped}
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12.5px] font-bold transition active:translate-y-px ${
+                className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-semibold transition active:translate-y-px ${
                   stopped
                     ? "cursor-default border-ink-200 text-ink-400"
                     : "border-[#e05252]/30 bg-white text-[#c04545] hover:bg-[#e05252]/5"
                 }`}
               >
-                <Power size={14} />
+                <Power size={12} />
                 {stopped ? "Servidor detenido" : "Detener servidor"}
               </button>
             </div>
