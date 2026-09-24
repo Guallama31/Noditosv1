@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ChevronLeft } from "lucide-react";
 import type { MapSnapshot, MindNode, NotifyFn } from "../types";
 import { useMindMap } from "../hooks/useMindMap";
 import { Toolbar } from "./Toolbar";
@@ -259,14 +259,18 @@ export function Workspace({
             onFocusNode={focusNode}
           />
 
-          {/* botón flotante para reabrir el Inspector cuando está oculto */}
+          {/* pestaña de borde para reabrir el Inspector cuando está minimizado */}
           {selectedNode && !inspectorOpen && (
             <button
               onClick={() => setInspectorOpen(true)}
               title="Mostrar inspector"
-              className="pop-in absolute right-0 top-1/2 z-30 flex -translate-y-1/2 items-center gap-1.5 rounded-l-lg border border-r-0 border-ink-200/80 bg-white/95 py-3 pl-1.5 pr-2 text-ink-500 shadow-md transition hover:bg-white hover:text-ink-800"
+              aria-label="Mostrar inspector"
+              className="pop-in absolute right-0 top-1/2 z-30 flex -translate-y-1/2 cursor-pointer items-center gap-1.5 rounded-l-lg border border-r-0 border-ink-200/80 bg-white/95 py-3.5 pl-1.5 pr-2 text-ink-500 shadow-md transition hover:bg-white hover:text-ink-900"
             >
-              <span className="text-[10px] font-bold uppercase tracking-wider">Inspector</span>
+              <ChevronLeft size={13} />
+              <span className="text-[9.5px] font-bold uppercase tracking-[0.18em] [writing-mode:vertical-rl]">
+                Inspector
+              </span>
             </button>
           )}
         </div>
