@@ -167,7 +167,6 @@ const NodeView = memo(function NodeView({
         width: box.w,
         height: box.h,
         zIndex: selected ? 20 : d === 0 ? 10 : 5,
-        transform: "translateZ(0)",
       }}
     >
       <div
@@ -1011,15 +1010,21 @@ export function Canvas({
           position: "absolute",
           left: 0,
           top: 0,
-          transform: `translate3d(${view.tx}px, ${view.ty}px, 0) scale3d(${view.scale}, ${view.scale}, 1)`,
+          // Mantener el lienzo en una capa 2D evita que el navegador lo
+          // convierta en una textura bitmap al hacer zoom. En particular,
+          // translate3d/scale3d + will-change suelen dejar texto y nodos
+          // borrosos después de varios acercamientos.
+          transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`,
           transformOrigin: "0 0",
-          willChange: "transform",
-          backfaceVisibility: "hidden",
-          imageRendering: "auto",
         }}
       >
         <div style={{ position: "absolute", left: bounds.minX, top: bounds.minY, width: bw, height: bh }}>
-          <svg className="absolute left-0 top-0 overflow-visible" width={bw} height={bh}>
+          <svg
+            className="absolute left-0 top-0 overflow-visible"
+            width={bw}
+            height={bh}
+            shapeRendering="geometricPrecision"
+          >
             {edgePaths}
 
             {/* hilo de previsualización */}
