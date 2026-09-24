@@ -14,6 +14,7 @@ import {
 import type { MindNode, NodeFont, NodeImage, NodeKind, NotifyFn } from "../types";
 import type { MindMapApi } from "../hooks/useMindMap";
 import {
+  clearTextMeasurementCache,
   computeLayout,
   edgeAnchor,
   edgePath,
@@ -35,11 +36,21 @@ import {
 import { parsePastedHtml, parsePastedText } from "../lib/paste";
 import { fileToNodeImage, isProbablyImageUrl, urlToNodeImage } from "../lib/image";
 import { ensureFonts } from "../lib/fonts";
+import { screenRectToWorld, screenToWorld, worldToScreen, zoomAtPoint, type Camera } from "../lib/camera";
 import { openUrl } from "../lib/links";
 import { LinkText } from "./LinkText";
 import { FontToolbar } from "./FontToolbar";
+import {
+  CanvasBackground,
+  CanvasControls,
+  CanvasEdges,
+  CanvasInteractionOverlay,
+  CanvasNodes,
+  CanvasViewportLayer,
+} from "./CanvasLayers";
 
 const MAX_ZOOM = 1.5;
+type RenderStrategy = "viewport" | "screen";
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 
 export const NODE_KINDS: Array<{ id: NodeKind; label: string; hint: string; icon: React.ReactNode; key: string }> = [
@@ -114,6 +125,9 @@ interface NodeViewProps {
   onTab: (id: string) => void;
   onRequestImage: (id: string) => void;
   onFontChange: (id: string, font: NodeFont | null) => void;
+  screen?: { left: number; top: number; width: number; height: number; scale: number };
+  lowDetail?: boolean;
+  performanceMode?: boolean;
 }
 
 const NodeView = memo(function NodeView({
@@ -137,8 +151,12 @@ const NodeView = memo(function NodeView({
   onTab,
   onRequestImage,
   onFontChange,
+  screen,
+  lowDetail = false,
+  performanceMode = false,
 }: NodeViewProps) {
   const d = box.depth;
+  const renderScale = screen?.scale ?? 1;
   const st = nodeStyle(box, selected, dimmed, d === 0 ? false : isTarget);
   const kind = box.kind;
   const color = box.color;
@@ -162,12 +180,12 @@ const NodeView = memo(function NodeView({
     <div
       className="absolute select-none"
       style={{
-        left: box.cx - box.w / 2 - minX,
-        top: box.cy - box.h / 2 - minY,
-        width: box.w,
-        height: box.h,
+        left: screen?.left ?? box.cx - box.w / 2 - minX,
+        top: screen?.top ?? box.cy - box.h / 2 - minY,
+        width: screen?.width ?? box.w,
+        height: screen?.height ?? box.h,
         zIndex: selected ? 20 : d === 0 ? 10 : 5,
-        transform: "translateZ(0)",
+        pointerEvents: screen ? "auto" : undefined,
       }}
     >
       <div
@@ -176,7 +194,7 @@ const NodeView = memo(function NodeView({
         onPointerUp={onPointerUp}
         onLostPointerCapture={onLostCapture}
         onDoubleClick={(e) => onDoubleClick(e, box.id)}
-        className={`group relative flex h-full w-full flex-col justify-center transition-[box-shadow,opacity,border-color,filter] duration-150 ${
+        className={`group relative flex h-full w-full flex-col justify-center ${performanceMode ? "" : "transition-[box-shadow,opacity,border-color,filter] duration-150"} ${
           d === 0 ? "cursor-default" : "cursor-grab active:cursor-grabbing"
         }`}
         style={{
@@ -188,31 +206,32 @@ const NodeView = memo(function NodeView({
           borderRadius: d === 0 ? 16 : kind === "image" ? 12 : 10,
           color: st.textColor,
           fontWeight: ty.fontWeight,
-          fontSize: ty.fontSize,
-          lineHeight: `${ty.lineHeight}px`,
+          fontSize: ty.fontSize * renderScale,
+          lineHeight: `${ty.lineHeight * renderScale}px`,
           fontFamily: ty.fontFamily,
           fontStyle: ty.italic ? "italic" : undefined,
-          boxShadow: searchMatch ? `${st.shadow}, 0 0 0 4px rgba(181,74,51,0.22)` : st.shadow,
+          boxShadow: performanceMode ? "none" : searchMatch ? `${st.shadow}, 0 0 0 4px rgba(181,74,51,0.22)` : st.shadow,
           opacity: st.opacity,
           filter: selected ? "saturate(1.02)" : undefined,
-          padding: `${ty.padY}px ${ty.padX}px`,
+          padding: `${ty.padY * renderScale}px ${ty.padX * renderScale}px`,
           touchAction: "none",
         }}
       >
         {hasImage ? (
           <div className="flex h-full w-full flex-col items-center justify-center gap-1.5">
-            {img && node.image ? (
+            {img && node.image && !lowDetail ? (
               <img
                 src={node.image.src}
                 alt={node.image.alt || node.text.trim() || "Imagen del nodo"}
                 draggable={false}
+                decoding="async"
                 className="rounded-lg object-cover"
-                style={{ width: img.w, height: img.h }}
+                style={{ width: img.w * renderScale, height: img.h * renderScale }}
               />
             ) : (
               <div
                 className="grid place-items-center rounded-lg border-2 border-dashed text-ink-300"
-                style={{ width: 200, height: 120, borderColor: withAlpha(color, 0.4) }}
+                style={{ width: 200 * renderScale, height: 120 * renderScale, borderColor: withAlpha(color, 0.4) }}
               >
                 <span className="flex flex-col items-center gap-1 text-[11px] font-semibold">
                   <ImageIcon size={20} />
@@ -238,14 +257,14 @@ const NodeView = memo(function NodeView({
           ))
         )}
 
-        {kind === "title" && (
+        {kind === "title" && !lowDetail && (
           <span
             className="absolute bottom-[5px] left-1/2 h-[2.5px] w-2/3 -translate-x-1/2 rounded-full"
             style={{ background: color }}
           />
         )}
 
-        {box.hasNotes && !hasImage && (
+        {!lowDetail && box.hasNotes && !hasImage && (
           <span
             title="Tiene notas"
             className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full border-2 border-white bg-[#c08a2e] text-white shadow-sm"
@@ -356,19 +375,75 @@ export function Canvas({
   searchMatchIds,
 }: CanvasProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
-  const viewRef = useRef(view);
+  const [view, setView] = useState<Camera>({ scale: 1, tx: 0, ty: 0 });
+  const viewRef = useRef<Camera>(view);
   viewRef.current = view;
   const [animating, setAnimating] = useState(false);
   const [panning, setPanning] = useState(false);
   const panRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const [fontTick, setFontTick] = useState(0);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [renderStrategy, setRenderStrategy] = useState<RenderStrategy>("viewport");
+  const [renderMetrics, setRenderMetrics] = useState({ fps: 0, layoutMs: 0, longTasks: 0, visibleNodes: 0 });
+  const metricRef = useRef({ frames: 0, layoutMs: 0, longTasks: 0 });
 
-  const layout = useMemo(
-    () => computeLayout(api.root),
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      setViewportSize({ width: rect.width, height: rect.height });
+    };
+    update();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    observer?.observe(el);
+    return () => observer?.disconnect();
+  }, []);
+
+  // Instrumentación ligera para comparar estrategias sin introducir un loop
+  // de renderizado propio: contamos frames mientras cambia la cámara y
+  // registramos long tasks del navegador como aproximación al coste de CPU.
+  useEffect(() => {
+    let raf = 0;
+    let last = { ...viewRef.current };
+    let lastReport = performance.now();
+    const tick = (now: number) => {
+      const current = viewRef.current;
+      if (current.scale !== last.scale || current.tx !== last.tx || current.ty !== last.ty) {
+        metricRef.current.frames += 1;
+        last = { ...current };
+      }
+      if (now - lastReport >= 500) {
+        const elapsed = now - lastReport;
+        setRenderMetrics((m) => ({
+          fps: Math.round((metricRef.current.frames * 1000) / elapsed),
+          layoutMs: metricRef.current.layoutMs,
+          longTasks: metricRef.current.longTasks,
+          visibleNodes: m.visibleNodes,
+        }));
+        metricRef.current.frames = 0;
+        lastReport = now;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    const observer = typeof PerformanceObserver !== "undefined" ? new PerformanceObserver((entries) => {
+      metricRef.current.longTasks += entries.getEntries().length;
+    }) : null;
+    try { observer?.observe({ type: "longtask", buffered: true }); } catch { /* no disponible en todos los navegadores */ }
+    return () => {
+      cancelAnimationFrame(raf);
+      observer?.disconnect();
+    };
+  }, []);
+
+  const layout = useMemo(() => {
+    const started = performance.now();
+    const result = computeLayout(api.root);
+    metricRef.current.layoutMs = Math.round((performance.now() - started) * 100) / 100;
+    return result;
     // fontTick fuerza a re-medir cuando cargan las fuentes web
-    [api.root, fontTick],
-  );
+  }, [api.root, fontTick]);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const apiRef = useRef(api);
@@ -402,8 +477,8 @@ export function Canvas({
 
   const onFontChange = useCallback((id: string, font: NodeFont | null) => {
     apiRef.current.setFont(id, font);
-    if (font) ensureFonts([font.family]).then(() => setFontTick((t) => t + 1));
-    else setFontTick((t) => t + 1);
+    if (font) ensureFonts([font.family]).then(() => { clearTextMeasurementCache(); setFontTick((t) => t + 1); });
+    else { clearTextMeasurementCache(); setFontTick((t) => t + 1); }
   }, []);
 
   const nodeById = useMemo(() => {
@@ -485,7 +560,7 @@ export function Canvas({
     setView((v) => {
       const scale = clamp(v.scale * k, 0.2, MAX_ZOOM);
       const kk = scale / v.scale;
-      return { scale, tx: width / 2 - kk * (width / 2 - v.tx), ty: height / 2 - kk * (height / 2 - v.ty) };
+      return zoomAtPoint(v, { x: width / 2, y: height / 2 }, scale);
     });
   }, []);
 
@@ -495,6 +570,7 @@ export function Canvas({
     let alive = true;
     document.fonts?.ready.then(() => {
       if (alive) {
+        clearTextMeasurementCache();
         setFontTick((t) => t + 1);
         requestAnimationFrame(() => fitRef.current(false));
       }
@@ -524,8 +600,7 @@ export function Canvas({
         setAnimating(false);
         setView((v) => {
           const scale = clamp(v.scale * Math.exp(-ev.deltaY * 0.0013), 0.2, MAX_ZOOM);
-          const k = scale / v.scale;
-          return { scale, tx: mx - k * (mx - v.tx), ty: my - k * (my - v.ty) };
+          return zoomAtPoint(v, { x: mx, y: my }, scale);
         });
       });
     };
@@ -558,7 +633,7 @@ export function Canvas({
     if (!usedFamilies) return;
     let alive = true;
     ensureFonts(usedFamilies.split("|")).then(() => {
-      if (alive) setFontTick((t) => t + 1);
+      if (alive) { clearTextMeasurementCache(); setFontTick((t) => t + 1); }
     });
     return () => {
       alive = false;
@@ -788,19 +863,23 @@ export function Canvas({
   /* ---------- handlers de nodo (estables) ---------- */
   const hitTest = (dragRect: { left: number; right: number; top: number; bottom: number }, excludeId: string): string | null => {
     const dragNode = findNode(apiRef.current.root, excludeId);
-    const dragArea = (dragRect.right - dragRect.left) * (dragRect.bottom - dragRect.top);
+    const camera = viewRef.current;
+    const dragTopLeft = worldToScreen({ x: dragRect.left, y: dragRect.top }, camera);
+    const dragBottomRight = worldToScreen({ x: dragRect.right, y: dragRect.bottom }, camera);
+    const dragArea = (dragBottomRight.x - dragTopLeft.x) * (dragBottomRight.y - dragTopLeft.y);
     let best: string | null = null;
     let bestArea = 0;
     for (const box of layoutRef.current.boxes.values()) {
       if (box.id === excludeId) continue;
       if (dragNode && isDescendant(dragNode, box.id)) continue;
       const pad = 6;
-      const left = box.cx - box.w / 2 - pad;
-      const right = box.cx + box.w / 2 + pad;
-      const top = box.cy - box.h / 2 - pad;
-      const bottom = box.cy + box.h / 2 + pad;
-      const overlapW = Math.min(dragRect.right, right) - Math.max(dragRect.left, left);
-      const overlapH = Math.min(dragRect.bottom, bottom) - Math.max(dragRect.top, top);
+      const center = worldToScreen({ x: box.cx, y: box.cy }, camera);
+      const left = center.x - (box.w / 2 + pad) * camera.scale;
+      const right = center.x + (box.w / 2 + pad) * camera.scale;
+      const top = center.y - (box.h / 2 + pad) * camera.scale;
+      const bottom = center.y + (box.h / 2 + pad) * camera.scale;
+      const overlapW = Math.min(dragBottomRight.x, right) - Math.max(dragTopLeft.x, left);
+      const overlapH = Math.min(dragBottomRight.y, bottom) - Math.max(dragTopLeft.y, top);
       if (overlapW <= 0 || overlapH <= 0) continue;
       const area = overlapW * overlapH;
       const boxArea = (right - left) * (bottom - top);
@@ -852,9 +931,13 @@ export function Canvas({
       apiRef.current.select(d.id);
     }
     const v = viewRef.current;
-    const zoomSensitivity = 0.85 / Math.max(v.scale, 0.35);
-    const dx = (e.clientX - d.startX) * zoomSensitivity;
-    const dy = (e.clientY - d.startY) * zoomSensitivity;
+    const canvasRect = wrapperRef.current?.getBoundingClientRect();
+    const originX = canvasRect?.left ?? 0;
+    const originY = canvasRect?.top ?? 0;
+    const startWorld = screenToWorld({ x: d.startX - originX, y: d.startY - originY }, v);
+    const currentWorld = screenToWorld({ x: e.clientX - originX, y: e.clientY - originY }, v);
+    const dx = currentWorld.x - startWorld.x;
+    const dy = currentWorld.y - startWorld.y;
     const rect = draggedRect(d.id, dx, dy);
     const over = rect ? hitTest(rect, d.id) : null;
     d.dx = dx;
@@ -955,6 +1038,57 @@ export function Canvas({
   const totalNodes = countNodes(api.root);
   const depth = maxDepth(api.root);
   const rootBox = layout.boxes.get(api.root.id);
+  const lowDetail = view.scale < 0.35;
+  const performanceMode = lowDetail || panning || !!drag || animating;
+  const visibleWorld = useMemo(
+    () => screenRectToWorld(
+      { left: -900, top: -900, right: viewportSize.width + 900, bottom: viewportSize.height + 900 },
+      view,
+    ),
+    [view, viewportSize],
+  );
+  const visibleBoxes = useMemo(() => {
+    const result = new Map<string, NodeBox>();
+    for (const box of displayBoxes.values()) {
+      const visible =
+        box.id === api.selectedId ||
+        dragIds.has(box.id) ||
+        (box.cx + box.w / 2 >= visibleWorld.left &&
+          box.cx - box.w / 2 <= visibleWorld.right &&
+          box.cy + box.h / 2 >= visibleWorld.top &&
+          box.cy - box.h / 2 <= visibleWorld.bottom);
+      if (visible) result.set(box.id, box);
+    }
+    return result;
+  }, [displayBoxes, api.selectedId, dragIds, visibleWorld]);
+  useEffect(() => {
+    setRenderMetrics((m) => ({ ...m, visibleNodes: visibleBoxes.size }));
+  }, [visibleBoxes.size, renderStrategy]);
+
+  const activeBox = api.selectedId ? displayBoxes.get(api.selectedId) : undefined;
+  const activeTopLeft = activeBox
+    ? worldToScreen({ x: activeBox.cx - activeBox.w / 2, y: activeBox.cy - activeBox.h / 2 }, view)
+    : undefined;
+  const activeScreen = activeBox && activeTopLeft
+    ? {
+        left: activeTopLeft.x,
+        top: activeTopLeft.y,
+        width: activeBox.w * view.scale,
+        height: activeBox.h * view.scale,
+        scale: view.scale,
+      }
+    : undefined;
+  const screenGeometry = useCallback((box: NodeBox) => {
+    const topLeft = worldToScreen({ x: box.cx - box.w / 2, y: box.cy - box.h / 2 }, view);
+    return {
+      left: topLeft.x,
+      top: topLeft.y,
+      width: box.w * view.scale,
+      height: box.h * view.scale,
+      scale: view.scale,
+    };
+  }, [view]);
+
   const manualCount = useMemo(() => {
     let c = 0;
     const walk = (n: MindNode) => {
@@ -965,29 +1099,58 @@ export function Canvas({
     return c;
   }, [api.root]);
 
-  const edgePaths = useMemo(
-    () =>
-      layout.edges.map((edge) => {
-        const from = displayBoxes.get(edge.fromId);
-        const to = displayBoxes.get(edge.toId);
-        if (!from || !to) return null;
-        const active = edge.toId === api.selectedId;
-        const detaching = preview !== null && edge.toId === preview.id;
-        return (
-          <path
-            key={edge.toId}
-            d={edgePath(from, to, bounds.minX, bounds.minY)}
-            fill="none"
-            stroke={edge.color}
-            strokeOpacity={detaching ? 0.22 : active ? 1 : 0.7}
-            strokeWidth={detaching ? 2 : active ? 3 : 2}
-            strokeLinecap="round"
-            className={`edge-path ${active && !detaching ? "edge-active" : ""}`}
-          />
-        );
-      }),
-    [layout, displayBoxes, api.selectedId, preview, bounds.minX, bounds.minY],
-  );
+  const visibleEdgeNodes = useMemo(() => {
+    const ids = new Set<string>();
+    for (const box of layout.boxes.values()) {
+      if (
+        box.id === api.selectedId ||
+        (box.cx + box.w / 2 >= visibleWorld.left &&
+          box.cx - box.w / 2 <= visibleWorld.right &&
+          box.cy + box.h / 2 >= visibleWorld.top &&
+          box.cy - box.h / 2 <= visibleWorld.bottom)
+      ) ids.add(box.id);
+    }
+    return ids;
+  }, [layout.boxes, api.selectedId, visibleWorld]);
+
+  // Los paths estáticos se calculan una sola vez por layout/viewport. Durante
+  // un drag solo se recalculan las uniones que tocan la rama desplazada.
+  const staticEdgePaths = useMemo(() => {
+    const paths = new Map<string, string>();
+    for (const edge of layout.edges) {
+      if (!visibleEdgeNodes.has(edge.fromId) && !visibleEdgeNodes.has(edge.toId)) continue;
+      const from = layout.boxes.get(edge.fromId);
+      const to = layout.boxes.get(edge.toId);
+      if (from && to) paths.set(edge.toId, edgePath(from, to, bounds.minX, bounds.minY));
+    }
+    return paths;
+  }, [layout.edges, layout.boxes, visibleEdgeNodes, bounds.minX, bounds.minY]);
+
+  const edgePaths = useMemo(() => layout.edges.map((edge) => {
+    if (!visibleEdgeNodes.has(edge.fromId) && !visibleEdgeNodes.has(edge.toId)) return null;
+    const moving = !!drag && (dragIds.has(edge.fromId) || dragIds.has(edge.toId));
+    const from = moving ? displayBoxes.get(edge.fromId) : layout.boxes.get(edge.fromId);
+    const to = moving ? displayBoxes.get(edge.toId) : layout.boxes.get(edge.toId);
+    if (!from || !to) return null;
+    const active = edge.toId === api.selectedId;
+    const detaching = preview !== null && edge.toId === preview.id;
+    const d = moving
+      ? edgePath(from, to, bounds.minX, bounds.minY)
+      : staticEdgePaths.get(edge.toId);
+    if (!d) return null;
+    return (
+      <path
+        key={edge.toId}
+        d={d}
+        fill="none"
+        stroke={edge.color}
+        strokeOpacity={detaching ? 0.22 : active ? 1 : 0.7}
+        strokeWidth={detaching ? 2 / view.scale : active ? 3 / view.scale : Math.max(1.25, Math.min(2.5, 2 / view.scale))}
+        strokeLinecap="round"
+        className={`edge-path ${active && !detaching && !performanceMode ? "edge-active" : ""}`}
+      />
+    );
+  }), [layout.edges, layout.boxes, visibleEdgeNodes, staticEdgePaths, displayBoxes, drag, dragIds, api.selectedId, preview, bounds.minX, bounds.minY, performanceMode, view.scale]);
 
   return (
     <div
@@ -1002,24 +1165,30 @@ export function Canvas({
       onDragOver={onCanvasDragOver}
       onDrop={onCanvasDrop}
     >
-      <div className="wash wash-a" style={{ width: 640, height: 640, left: "-10%", top: "-15%", background: "rgba(120,124,138,0.10)" }} />
-      <div className="wash wash-b" style={{ width: 700, height: 700, right: "-12%", bottom: "-20%", background: "rgba(140,136,150,0.08)" }} />
+      <CanvasBackground />
 
-      <div
+      <CanvasViewportLayer
         className={animating ? "canvas-anim" : undefined}
         style={{
           position: "absolute",
           left: 0,
           top: 0,
-          transform: `translate3d(${view.tx}px, ${view.ty}px, 0) scale3d(${view.scale}, ${view.scale}, 1)`,
+          // Mantener el lienzo en una capa 2D evita que el navegador lo
+          // convierta en una textura bitmap al hacer zoom. En particular,
+          // translate3d/scale3d + will-change suelen dejar texto y nodos
+          // borrosos después de varios acercamientos.
+          transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`,
           transformOrigin: "0 0",
-          willChange: "transform",
-          backfaceVisibility: "hidden",
-          imageRendering: "auto",
         }}
       >
         <div style={{ position: "absolute", left: bounds.minX, top: bounds.minY, width: bw, height: bh }}>
-          <svg className="absolute left-0 top-0 overflow-visible" width={bw} height={bh}>
+          <CanvasEdges>
+          <svg
+            className="absolute left-0 top-0 overflow-visible"
+            width={bw}
+            height={bh}
+            shapeRendering="geometricPrecision"
+          >
             {edgePaths}
 
             {/* hilo de previsualización */}
@@ -1037,10 +1206,11 @@ export function Canvas({
                       stroke={from.color}
                       strokeOpacity={0.95}
                       strokeWidth={3}
+                      vectorEffect="non-scaling-stroke"
                       strokeLinecap="round"
                       className="edge-path edge-active"
                     />
-                    <circle cx={anchor.x - bounds.minX} cy={anchor.y - bounds.minY} r={5} fill={from.color} />
+                    <circle cx={anchor.x - bounds.minX} cy={anchor.y - bounds.minY} r={5} fill={from.color} vectorEffect="non-scaling-stroke" />
                     <circle
                       cx={anchor.x - bounds.minX}
                       cy={anchor.y - bounds.minY}
@@ -1048,6 +1218,7 @@ export function Canvas({
                       fill="none"
                       stroke={from.color}
                       strokeWidth={2}
+                      vectorEffect="non-scaling-stroke"
                       className="anchor-pulse"
                       style={{ transformOrigin: `${anchor.x - bounds.minX}px ${anchor.y - bounds.minY}px` }}
                     />
@@ -1071,8 +1242,14 @@ export function Canvas({
               }}
             />
           )}
+          </CanvasEdges>
 
-          {[...displayBoxes.values()].map((box) => {
+          <CanvasNodes>
+          {renderStrategy === "viewport" && [...visibleBoxes.values()].map((box) => {
+            // El nodo activo se pinta en el overlay de pantalla para que el
+            // navegador rasterice su texto al tamaño final, no como textura
+            // ampliada del viewport completo.
+            if (box.id === api.selectedId) return null;
             const node = nodeById.get(box.id);
             if (!node) return null;
             return (
@@ -1098,13 +1275,86 @@ export function Canvas({
                 onTab={openPicker}
                 onRequestImage={onRequestImageRef.current}
                 onFontChange={onFontChange}
+                lowDetail={lowDetail}
+                performanceMode={performanceMode}
               />
             );
           })}
+          </CanvasNodes>
 
         </div>
-      </div>
+      </CanvasViewportLayer>
 
+      {/* Overlay del nodo activo: evita ampliar una textura del viewport y
+          conserva edición, links y controles HTML nativos. */}
+      <CanvasInteractionOverlay>
+      {renderStrategy === "screen" && [...visibleBoxes.values()].map((box) => {
+        const node = nodeById.get(box.id);
+        if (!node) return null;
+        return (
+          <NodeView
+            key={`screen-${box.id}`}
+            node={node}
+            box={box}
+            minX={0}
+            minY={0}
+            selected={api.selectedId === box.id}
+            editing={api.editingId === box.id}
+            dimmed={false}
+            isTarget={drag?.over === box.id}
+            searchMatch={searchMatchIds?.has(box.id)}
+            onPointerDown={onNodePointerDown}
+            onPointerMove={onNodePointerMove}
+            onPointerUp={onNodePointerUp}
+            onLostCapture={onLostCapture}
+            onDoubleClick={onNodeDoubleClick}
+            onToggleCollapse={onNodeToggleCollapse}
+            onCommit={onNodeCommit}
+            onCancel={onNodeCancel}
+            onTab={openPicker}
+            onRequestImage={onRequestImageRef.current}
+            onFontChange={onFontChange}
+            screen={screenGeometry(box)}
+            lowDetail={lowDetail}
+            performanceMode={performanceMode}
+          />
+        );
+      })}
+      {renderStrategy === "viewport" && activeBox && activeScreen && (() => {
+        const node = nodeById.get(activeBox.id);
+        if (!node) return null;
+        return (
+          <NodeView
+            key={`active-${activeBox.id}`}
+            node={node}
+            box={activeBox}
+            minX={0}
+            minY={0}
+            selected
+            editing={api.editingId === activeBox.id}
+            dimmed={false}
+            isTarget={drag?.over === activeBox.id}
+            searchMatch={searchMatchIds?.has(activeBox.id)}
+            onPointerDown={onNodePointerDown}
+            onPointerMove={onNodePointerMove}
+            onPointerUp={onNodePointerUp}
+            onLostCapture={onLostCapture}
+            onDoubleClick={onNodeDoubleClick}
+            onToggleCollapse={onNodeToggleCollapse}
+            onCommit={onNodeCommit}
+            onCancel={onNodeCancel}
+            onTab={openPicker}
+            onRequestImage={onRequestImageRef.current}
+            onFontChange={onFontChange}
+            screen={activeScreen}
+            lowDetail={lowDetail}
+            performanceMode={performanceMode}
+          />
+        );
+      })()}
+      </CanvasInteractionOverlay>
+
+      <CanvasControls>
       {/* zoom */}
       <div
         className="absolute right-3 top-3 z-20 flex flex-col items-center gap-0.5 rounded-lg border border-ink-200/80 bg-white/95 p-0.5 shadow-sm"
@@ -1136,6 +1386,15 @@ export function Canvas({
         <span>{totalNodes} nodos</span>
         <span className="text-ink-300">·</span>
         <span>{depth} niveles</span>
+        <span className="text-ink-300">·</span>
+        <button
+          onClick={() => setRenderStrategy((mode) => mode === "viewport" ? "screen" : "viewport")}
+          title="Comparar renderizado: viewport transformado frente a nodos posicionados en pantalla"
+          className="rounded-md border border-ink-200 bg-white px-1.5 py-0.5 text-[10px] font-bold text-ink-600 transition hover:border-brand hover:text-brand"
+        >
+          {renderStrategy === "viewport" ? "Render: viewport" : "Render: pantalla"}
+        </button>
+        <span className="text-ink-400" title="FPS de cámara, tiempo de layout y long tasks del navegador">{renderMetrics.fps} fps · {renderMetrics.layoutMs} ms · {renderMetrics.visibleNodes} visibles · {renderMetrics.longTasks} tareas</span>
         {manualCount > 0 && (
           <>
             <span className="text-ink-300">·</span>
@@ -1155,8 +1414,7 @@ export function Canvas({
           </>
         )}
       </div>
-
-
+      </CanvasControls>
 
       {/* fantasma del nodo en arrastre */}
       {drag && drag.over && (
@@ -1176,8 +1434,9 @@ export function Canvas({
           const box = layout.boxes.get(picker);
           if (!box) return null;
           const el = wrapperRef.current?.getBoundingClientRect();
-          const x = (el?.left ?? 0) + box.cx * view.scale + view.tx;
-          const y = (el?.top ?? 0) + (box.cy + box.h / 2) * view.scale + view.ty;
+          const anchor = worldToScreen({ x: box.cx, y: box.cy + box.h / 2 }, view);
+          const x = (el?.left ?? 0) + anchor.x;
+          const y = (el?.top ?? 0) + anchor.y;
           return <TypePicker x={x} y={y} onPick={(kind) => pickKind(picker, kind)} onClose={closePicker} />;
         })()}
     </div>
