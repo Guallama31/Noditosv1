@@ -152,7 +152,7 @@ function AiSettingsButton({ onOpen }: { onOpen: () => void }) {
     <button
       onClick={onOpen}
       title={configured ? `Ayudante IA conectado a ${provider?.name ?? cfg.provider}` : "Configurar el Ayudante IA"}
-      className={`group flex items-center gap-1.5 self-center rounded-full border px-2 py-1 text-[11px] font-semibold transition active:translate-y-px ${
+      className={`group flex items-center gap-1.5 self-center rounded-lg border px-2 py-1 text-[11px] font-semibold transition active:translate-y-px ${
         configured
           ? "border-teal-brand/25 bg-teal-brand/5 text-teal-brand hover:bg-teal-brand/10"
           : "border-ink-200 bg-white/70 text-ink-400 hover:border-ink-300 hover:bg-white hover:text-ink-600"
@@ -273,13 +273,13 @@ export function LibraryScreen({
               <button
                 onClick={onRequestStop}
                 disabled={stopped}
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12.5px] font-bold transition active:translate-y-px ${
+                className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-semibold transition active:translate-y-px ${
                   stopped
                     ? "cursor-default border-ink-200 text-ink-400"
                     : "border-[#e05252]/30 bg-white text-[#c04545] hover:bg-[#e05252]/5"
                 }`}
               >
-                <Power size={14} />
+                <Power size={12} />
                 {stopped ? "Servidor detenido" : "Detener servidor"}
               </button>
             </div>
