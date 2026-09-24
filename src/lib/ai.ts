@@ -1,17 +1,36 @@
 import type { MindNode } from "../types";
 
-export type AiProvider = "gemini" | "openai" | "groq" | "ollama";
+export type AiProvider =
+  | "gemini"
+  | "openai"
+  | "anthropic"
+  | "groq"
+  | "mistral"
+  | "openrouter"
+  | "deepseek"
+  | "xai"
+  | "together"
+  | "perplexity"
+  | "fireworks"
+  | "cerebras"
+  | "ollama";
 
 export interface AiConfig {
   provider: AiProvider;
+  /** Compatibilidad con configuraciones viejas: clave activa del proveedor seleccionado. */
   apiKey: string;
-  /** Si es false, la clave solo vive en sessionStorage hasta cerrar la pestaña. */
+  /** Claves separadas por proveedor, para poder cambiar sin sobrescribir la anterior. */
+  apiKeys: Partial<Record<AiProvider, string>>;
+  /** Si es false, las claves solo viven en sessionStorage hasta cerrar la pestaña. */
   saveApiKey: boolean;
+  /** Campos heredados: se mantienen para migrar usuarios existentes. */
   geminiModel: string;
   openaiModel: string;
   groqModel: string;
   ollamaUrl: string;
   ollamaModel: string;
+  /** Modelo elegido por proveedor (incluye proveedores nuevos). */
+  modelByProvider: Partial<Record<AiProvider, string>>;
 }
 
 export interface ProviderDef {
@@ -19,14 +38,24 @@ export interface ProviderDef {
   name: string;
   tagline: string;
   keyUrl?: string;
+  keyPlaceholder?: string;
   needsKey: boolean;
   local?: boolean;
 }
 
 export const PROVIDERS: ProviderDef[] = [
-  { id: "gemini", name: "Gemini", tagline: "Google · capa gratuita generosa", keyUrl: "https://aistudio.google.com/apikey", needsKey: true },
-  { id: "openai", name: "OpenAI", tagline: "GPT · pago por uso", keyUrl: "https://platform.openai.com/api-keys", needsKey: true },
-  { id: "groq", name: "Groq", tagline: "Llama/Mixtral · rapidísimo, capa gratuita", keyUrl: "https://console.groq.com/keys", needsKey: true },
+  { id: "gemini", name: "Gemini", tagline: "Google · rápido y multimodal", keyUrl: "https://aistudio.google.com/apikey", keyPlaceholder: "AIza…", needsKey: true },
+  { id: "openai", name: "OpenAI", tagline: "GPT · pago por uso", keyUrl: "https://platform.openai.com/api-keys", keyPlaceholder: "sk-…", needsKey: true },
+  { id: "anthropic", name: "Anthropic", tagline: "Claude · escritura y análisis", keyUrl: "https://console.anthropic.com/settings/keys", keyPlaceholder: "sk-ant-…", needsKey: true },
+  { id: "groq", name: "Groq", tagline: "Llama/Qwen · muy rápido", keyUrl: "https://console.groq.com/keys", keyPlaceholder: "gsk_…", needsKey: true },
+  { id: "mistral", name: "Mistral", tagline: "Modelos europeos · API propia", keyUrl: "https://console.mistral.ai/api-keys", keyPlaceholder: "…", needsKey: true },
+  { id: "openrouter", name: "OpenRouter", tagline: "Decenas de modelos en una API", keyUrl: "https://openrouter.ai/settings/keys", keyPlaceholder: "sk-or-…", needsKey: true },
+  { id: "deepseek", name: "DeepSeek", tagline: "Razonamiento y código", keyUrl: "https://platform.deepseek.com/api_keys", keyPlaceholder: "sk-…", needsKey: true },
+  { id: "xai", name: "xAI", tagline: "Grok · API compatible", keyUrl: "https://console.x.ai/team/api-keys", keyPlaceholder: "xai-…", needsKey: true },
+  { id: "together", name: "Together AI", tagline: "Open models · servidor rápido", keyUrl: "https://api.together.xyz/settings/api-keys", keyPlaceholder: "…", needsKey: true },
+  { id: "perplexity", name: "Perplexity", tagline: "Sonar · respuestas con búsqueda", keyUrl: "https://www.perplexity.ai/settings/api", keyPlaceholder: "pplx-…", needsKey: true },
+  { id: "fireworks", name: "Fireworks", tagline: "Open models optimizados", keyUrl: "https://fireworks.ai/account/api-keys", keyPlaceholder: "fw_…", needsKey: true },
+  { id: "cerebras", name: "Cerebras", tagline: "Llama veloz · inferencia rápida", keyUrl: "https://cloud.cerebras.ai/platform/", keyPlaceholder: "csk-…", needsKey: true },
   { id: "ollama", name: "Ollama", tagline: "Modelos locales · 100% privado", needsKey: false, local: true },
 ];
 
@@ -35,33 +64,150 @@ export const OLLAMA_DEFAULT_URL = "http://localhost:11434";
 export const DEFAULT_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-2.5-flash",
   openai: "gpt-4o-mini",
+  anthropic: "claude-3-5-haiku-latest",
   groq: "llama-3.3-70b-versatile",
+  mistral: "mistral-small-latest",
+  openrouter: "openai/gpt-4o-mini",
+  deepseek: "deepseek-chat",
+  xai: "grok-2-latest",
+  together: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+  perplexity: "sonar-pro",
+  fireworks: "accounts/fireworks/models/llama-v3p3-70b-instruct",
+  cerebras: "llama-3.3-70b",
   ollama: "llama3.2",
 };
+
+const PROVIDER_IDS = new Set<AiProvider>(PROVIDERS.map((p) => p.id));
+
+type LegacyModelKey = "geminiModel" | "openaiModel" | "groqModel" | "ollamaModel";
+
+function isAiProvider(value: unknown): value is AiProvider {
+  return typeof value === "string" && PROVIDER_IDS.has(value as AiProvider);
+}
+
+function legacyModelKeyFor(provider: AiProvider): LegacyModelKey | null {
+  switch (provider) {
+    case "gemini": return "geminiModel";
+    case "openai": return "openaiModel";
+    case "groq": return "groqModel";
+    case "ollama": return "ollamaModel";
+    default: return null;
+  }
+}
+
+function readSessionKeys(): Partial<Record<AiProvider, string>> {
+  try {
+    const raw = sessionStorage.getItem(AI_SESSION_KEYS);
+    const parsed = raw ? (JSON.parse(raw) as Partial<Record<AiProvider, string>>) : {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([provider, key]) => isAiProvider(provider) && typeof key === "string"),
+    ) as Partial<Record<AiProvider, string>>;
+  } catch {
+    return {};
+  }
+}
+
+function normalizeConfig(input?: Partial<AiConfig>): AiConfig {
+  const defaults = defaultAiConfig();
+  const savedProvider = isAiProvider(input?.provider) ? input.provider : defaults.provider;
+  const modelByProvider: Partial<Record<AiProvider, string>> = {
+    ...DEFAULT_MODELS,
+    ...(input?.modelByProvider ?? {}),
+  };
+  if (input?.geminiModel) modelByProvider.gemini = input.geminiModel;
+  if (input?.openaiModel) modelByProvider.openai = input.openaiModel;
+  if (input?.groqModel) modelByProvider.groq = input.groqModel;
+  if (input?.ollamaModel) modelByProvider.ollama = input.ollamaModel;
+
+  const apiKeys: Partial<Record<AiProvider, string>> = { ...(input?.apiKeys ?? {}) };
+  if (typeof input?.apiKey === "string" && input.apiKey && !apiKeys[savedProvider]) {
+    apiKeys[savedProvider] = input.apiKey;
+  }
+
+  const cfg: AiConfig = {
+    ...defaults,
+    ...input,
+    provider: savedProvider,
+    apiKey: "",
+    apiKeys,
+    modelByProvider,
+    geminiModel: modelByProvider.gemini ?? DEFAULT_MODELS.gemini,
+    openaiModel: modelByProvider.openai ?? DEFAULT_MODELS.openai,
+    groqModel: modelByProvider.groq ?? DEFAULT_MODELS.groq,
+    ollamaUrl: input?.ollamaUrl ?? defaults.ollamaUrl,
+    ollamaModel: modelByProvider.ollama ?? DEFAULT_MODELS.ollama,
+  };
+  cfg.apiKey = providerApiKey(cfg, cfg.provider);
+  return cfg;
+}
 
 export function defaultAiConfig(): AiConfig {
   return {
     provider: "gemini",
     apiKey: "",
+    apiKeys: {},
     saveApiKey: true,
     geminiModel: DEFAULT_MODELS.gemini,
     openaiModel: DEFAULT_MODELS.openai,
     groqModel: DEFAULT_MODELS.groq,
     ollamaUrl: OLLAMA_DEFAULT_URL,
     ollamaModel: DEFAULT_MODELS.ollama,
+    modelByProvider: { ...DEFAULT_MODELS },
   };
 }
 
 const AI_KEY = "noditos.ai.v1";
 const AI_SESSION_KEY = "noditos.ai.sessionKey.v1";
+const AI_SESSION_KEYS = "noditos.ai.sessionKeys.v1";
+
+export function providerApiKey(cfg: AiConfig, provider: AiProvider = cfg.provider): string {
+  if (provider === "ollama") return "";
+  if (cfg.apiKeys && Object.prototype.hasOwnProperty.call(cfg.apiKeys, provider)) {
+    return (cfg.apiKeys[provider] ?? "").trim();
+  }
+  // Fallback solo para configuraciones heredadas que todavía no tienen apiKeys.
+  return provider === cfg.provider && Object.keys(cfg.apiKeys ?? {}).length === 0 ? cfg.apiKey.trim() : "";
+}
+
+export function withProviderApiKey(cfg: AiConfig, key: string, provider: AiProvider = cfg.provider): AiConfig {
+  const next = normalizeConfig({
+    ...cfg,
+    apiKey: provider === cfg.provider ? key : cfg.apiKey,
+    apiKeys: { ...(cfg.apiKeys ?? {}), [provider]: key },
+  });
+  next.apiKey = providerApiKey(next, next.provider);
+  return next;
+}
+
+export function activeModelId(cfg: AiConfig, provider: AiProvider = cfg.provider): string {
+  const fromMap = cfg.modelByProvider?.[provider]?.trim();
+  if (fromMap) return fromMap;
+  const legacyKey = legacyModelKeyFor(provider);
+  if (legacyKey && cfg[legacyKey]?.trim()) return cfg[legacyKey].trim();
+  return DEFAULT_MODELS[provider];
+}
+
+export function withActiveModel(cfg: AiConfig, model: string, provider: AiProvider = cfg.provider): AiConfig {
+  const legacyKey = legacyModelKeyFor(provider);
+  const next: AiConfig = {
+    ...cfg,
+    modelByProvider: { ...(cfg.modelByProvider ?? {}), [provider]: model },
+  };
+  if (legacyKey) next[legacyKey] = model;
+  return normalizeConfig(next);
+}
 
 export function loadAiConfig(): AiConfig {
   try {
     const raw = localStorage.getItem(AI_KEY);
     const saved = raw ? (JSON.parse(raw) as Partial<AiConfig>) : {};
-    const cfg = { ...defaultAiConfig(), ...saved };
+    const cfg = normalizeConfig(saved);
     if (!cfg.saveApiKey) {
-      cfg.apiKey = sessionStorage.getItem(AI_SESSION_KEY) ?? "";
+      const sessionKeys = readSessionKeys();
+      const legacySessionKey = sessionStorage.getItem(AI_SESSION_KEY) ?? "";
+      cfg.apiKeys = { ...cfg.apiKeys, ...sessionKeys };
+      if (legacySessionKey && !cfg.apiKeys[cfg.provider]) cfg.apiKeys[cfg.provider] = legacySessionKey;
+      cfg.apiKey = providerApiKey(cfg, cfg.provider);
     }
     return cfg;
   } catch {
@@ -72,10 +218,18 @@ export function loadAiConfig(): AiConfig {
 
 export function saveAiConfig(cfg: AiConfig) {
   try {
-    const persistable: AiConfig = cfg.saveApiKey ? cfg : { ...cfg, apiKey: "" };
+    const normalized = normalizeConfig(cfg);
+    if (normalized.saveApiKey) {
+      localStorage.setItem(AI_KEY, JSON.stringify(normalized));
+      sessionStorage.removeItem(AI_SESSION_KEY);
+      sessionStorage.removeItem(AI_SESSION_KEYS);
+      return;
+    }
+
+    const persistable: AiConfig = { ...normalized, apiKey: "", apiKeys: {} };
     localStorage.setItem(AI_KEY, JSON.stringify(persistable));
-    if (cfg.saveApiKey) sessionStorage.removeItem(AI_SESSION_KEY);
-    else sessionStorage.setItem(AI_SESSION_KEY, cfg.apiKey);
+    sessionStorage.setItem(AI_SESSION_KEYS, JSON.stringify(normalized.apiKeys ?? {}));
+    sessionStorage.setItem(AI_SESSION_KEY, providerApiKey(normalized));
   } catch {
     /* almacenamiento no disponible */
   }
@@ -83,16 +237,7 @@ export function saveAiConfig(cfg: AiConfig) {
 
 export function isAiConfigured(cfg: AiConfig): boolean {
   if (cfg.provider === "ollama") return cfg.ollamaUrl.trim().length > 0;
-  return cfg.apiKey.trim().length > 0;
-}
-
-export function activeModelId(cfg: AiConfig): string {
-  switch (cfg.provider) {
-    case "gemini": return cfg.geminiModel;
-    case "openai": return cfg.openaiModel;
-    case "groq": return cfg.groqModel;
-    case "ollama": return cfg.ollamaModel;
-  }
+  return providerApiKey(cfg).length > 0;
 }
 
 /* ---------------- consulta en vivo de modelos ---------------- */
@@ -123,12 +268,116 @@ function sortDesc(a: string, b: string): number {
   return b.localeCompare(a, undefined, { numeric: true });
 }
 
+interface OpenAiCompatDef {
+  baseUrl: string;
+  freeModels?: boolean;
+  note: string;
+  filter?: (id: string) => boolean;
+}
+
+const TEXT_MODEL_EXCLUDE_RE = /(audio|tts|whisper|dall-e|realtime|embed|embedding|moderation|image|vision-preview|rerank|transcribe|speech)/i;
+
+const OPENAI_COMPAT: Partial<Record<AiProvider, OpenAiCompatDef>> = {
+  openai: {
+    baseUrl: "https://api.openai.com/v1",
+    note: "Pago por uso (se cobra por token)",
+    filter: (id) => /^(gpt-|o\d|chatgpt-)/.test(id) && !TEXT_MODEL_EXCLUDE_RE.test(id),
+  },
+  groq: {
+    baseUrl: "https://api.groq.com/openai/v1",
+    freeModels: true,
+    note: "Capa gratuita con límites de velocidad",
+    filter: (id) => !/whisper|playground/i.test(id),
+  },
+  mistral: {
+    baseUrl: "https://api.mistral.ai/v1",
+    note: "Según tu plan de Mistral",
+  },
+  openrouter: {
+    baseUrl: "https://openrouter.ai/api/v1",
+    note: "Precio según el modelo en OpenRouter",
+    filter: (id) => !TEXT_MODEL_EXCLUDE_RE.test(id),
+  },
+  deepseek: {
+    baseUrl: "https://api.deepseek.com/v1",
+    note: "Según tu plan de DeepSeek",
+  },
+  xai: {
+    baseUrl: "https://api.x.ai/v1",
+    note: "Según tu plan de xAI",
+  },
+  together: {
+    baseUrl: "https://api.together.xyz/v1",
+    note: "Según tu plan de Together AI",
+    filter: (id) => !TEXT_MODEL_EXCLUDE_RE.test(id) && !/embedding|rerank/i.test(id),
+  },
+  perplexity: {
+    baseUrl: "https://api.perplexity.ai",
+    note: "Según tu plan de Perplexity",
+    filter: (id) => /sonar|llama|mistral|mixtral|online/i.test(id) && !TEXT_MODEL_EXCLUDE_RE.test(id),
+  },
+  fireworks: {
+    baseUrl: "https://api.fireworks.ai/inference/v1",
+    note: "Según tu plan de Fireworks",
+    filter: (id) => !TEXT_MODEL_EXCLUDE_RE.test(id),
+  },
+  cerebras: {
+    baseUrl: "https://api.cerebras.ai/v1",
+    note: "Según tu plan de Cerebras",
+    filter: (id) => !TEXT_MODEL_EXCLUDE_RE.test(id),
+  },
+};
+
+function providerDisplayName(provider: AiProvider): string {
+  return PROVIDERS.find((p) => p.id === provider)?.name ?? provider;
+}
+
+function authHeaders(provider: AiProvider, key: string): HeadersInit {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${key}`,
+    "Content-Type": "application/json",
+  };
+  if (provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://noditos.local";
+    headers["X-Title"] = "Noditos";
+  }
+  return headers;
+}
+
+function asModelIds(data: unknown): string[] {
+  const root = (data ?? {}) as Record<string, unknown>;
+  const raw = Array.isArray(root.data)
+    ? root.data
+    : Array.isArray(root.models)
+      ? root.models
+      : Array.isArray(data)
+        ? data
+        : [];
+  return raw
+    .map((entry) => {
+      if (typeof entry === "string") return entry;
+      const o = (entry ?? {}) as Record<string, unknown>;
+      return typeof o.id === "string" ? o.id : typeof o.name === "string" ? o.name : "";
+    })
+    .filter((id): id is string => id.trim().length > 0);
+}
+
+function modelNote(provider: AiProvider, id: string, def: OpenAiCompatDef): string {
+  if (provider === "openrouter" && /:free$/i.test(id)) return "Gratis en OpenRouter (con límites)";
+  return def.note;
+}
+
+function isFreeModel(provider: AiProvider, id: string, def?: OpenAiCompatDef): boolean {
+  if (provider === "openrouter") return /:free$/i.test(id);
+  return Boolean(def?.freeModels);
+}
+
 /**
  * Consulta el endpoint oficial de cada proveedor y devuelve los modelos que
  * tu clave (o tu Ollama local) puede usar HOY, no un catálogo fijo.
  */
 export async function fetchProviderModels(cfg: AiConfig): Promise<FetchedModel[]> {
-  const key = cfg.apiKey.trim();
+  const key = providerApiKey(cfg);
 
   if (cfg.provider === "gemini") {
     if (!key) throw new Error("Ingresá tu clave de Google AI Studio para consultar los modelos.");
@@ -148,32 +397,43 @@ export async function fetchProviderModels(cfg: AiConfig): Promise<FetchedModel[]
     return models;
   }
 
-  if (cfg.provider === "openai") {
-    if (!key) throw new Error("Ingresá tu clave de OpenAI para consultar los modelos.");
-    const res = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${key}` } });
+  if (cfg.provider === "anthropic") {
+    if (!key) throw new Error("Ingresá tu clave de Anthropic para consultar los modelos.");
+    const res = await fetch("https://api.anthropic.com/v1/models", {
+      headers: {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+    });
     if (!res.ok) throw new Error(httpError(res.status, await res.text()));
     const data = await res.json();
-    const models = ((data.data ?? []) as Array<{ id: string }>)
-      .map((m) => m.id)
-      .filter((id) => /^(gpt-|o\d|chatgpt-)/.test(id))
-      .filter((id) => !/(audio|tts|whisper|dall-e|realtime|embed|search|transcribe|image)/.test(id))
-      .sort(sortDesc)
-      .map((id) => ({ id, label: prettify(id), free: false, note: "Pago por uso (se cobra por token)" }));
-    if (models.length === 0) throw new Error("OpenAI no devolvió modelos conversacionales para esta clave.");
+    const models = ((data.data ?? []) as Array<{ id: string; display_name?: string }>)
+      .map((m) => ({ id: m.id, label: m.display_name?.trim() || prettify(m.id), free: false, note: "Según tu plan de Anthropic" }))
+      .filter((m) => m.id && !TEXT_MODEL_EXCLUDE_RE.test(m.id))
+      .sort((a, b) => sortDesc(a.id, b.id));
+    if (models.length === 0) throw new Error("Anthropic no devolvió modelos para esta clave.");
     return models;
   }
 
-  if (cfg.provider === "groq") {
-    if (!key) throw new Error("Ingresá tu clave de Groq para consultar los modelos.");
-    const res = await fetch("https://api.groq.com/openai/v1/models", { headers: { Authorization: `Bearer ${key}` } });
+  const compat = OPENAI_COMPAT[cfg.provider];
+  if (compat) {
+    const name = providerDisplayName(cfg.provider);
+    if (!key) throw new Error(`Ingresá tu clave de ${name} para consultar los modelos.`);
+    const res = await fetch(`${compat.baseUrl}/models`, { headers: authHeaders(cfg.provider, key) });
     if (!res.ok) throw new Error(httpError(res.status, await res.text()));
     const data = await res.json();
-    const models = ((data.data ?? []) as Array<{ id: string }>)
-      .map((m) => m.id)
-      .filter((id) => !/whisper|distill|playground/.test(id))
+    const models = asModelIds(data)
+      .filter((id) => (compat.filter ? compat.filter(id) : !TEXT_MODEL_EXCLUDE_RE.test(id)))
       .sort(sortDesc)
-      .map((id) => ({ id, label: prettify(id), free: true, note: "Capa gratuita con límites de velocidad" }));
-    if (models.length === 0) throw new Error("Groq no devolvió modelos para esta clave.");
+      .slice(0, 250)
+      .map((id) => ({
+        id,
+        label: prettify(id),
+        free: isFreeModel(cfg.provider, id, compat),
+        note: modelNote(cfg.provider, id, compat),
+      }));
+    if (models.length === 0) throw new Error(`${name} no devolvió modelos de texto para esta clave.`);
     return models;
   }
 
@@ -200,48 +460,87 @@ export async function fetchProviderModels(cfg: AiConfig): Promise<FetchedModel[]
 function httpError(status: number, body: string): string {
   let msg = "";
   try {
-    const j = JSON.parse(body) as { error?: { message?: string } };
-    msg = j.error?.message ?? "";
+    const j = JSON.parse(body) as { error?: { message?: string; type?: string }; message?: string; detail?: string };
+    msg = j.error?.message ?? j.message ?? j.detail ?? "";
   } catch {
-    msg = body.slice(0, 160);
+    msg = body.slice(0, 240);
   }
   if (status === 401 || status === 403) return "La clave fue rechazada (401/403). Revisala en la configuración.";
   if (status === 429) return "Límite de uso alcanzado (429). Esperá un momento o cambiá de modelo.";
   return `Error ${status} del proveedor${msg ? `: ${msg}` : ""}.`;
 }
 
+function assertNotTruncated(provider: string, reason?: string) {
+  if (/^(length|max_tokens|MAX_TOKENS)$/i.test(reason ?? "")) {
+    throw new Error(`${provider} cortó la respuesta por límite de tokens. Probá de nuevo o elegí un modelo con más salida.`);
+  }
+}
+
 export async function askAi(cfg: AiConfig, system: string, user: string): Promise<string> {
   if (!isAiConfigured(cfg)) throw new Error("El Ayudante no está configurado. Abrí «Ayudante IA» en la biblioteca.");
 
+  const key = providerApiKey(cfg);
+  const model = activeModelId(cfg);
+  const maxTokens = 1600;
+
   if (cfg.provider === "gemini") {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${cfg.geminiModel}:generateContent?key=${encodeURIComponent(cfg.apiKey.trim())}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model.replace(/^models\//, ""))}:generateContent?key=${encodeURIComponent(key)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: "user", parts: [{ text: user }] }],
-          generationConfig: { temperature: 0.7 },
+          generationConfig: { temperature: 0.35, maxOutputTokens: maxTokens },
         }),
       },
     );
     if (!res.ok) throw new Error(httpError(res.status, await res.text()));
     const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("");
+    const candidate = data?.candidates?.[0];
+    assertNotTruncated("Gemini", candidate?.finishReason);
+    const text = candidate?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("");
     if (!text) throw new Error("Gemini devolvió una respuesta vacía.");
     return text.trim();
   }
 
-  if (cfg.provider === "openai" || cfg.provider === "groq") {
-    const url = cfg.provider === "openai" ? "https://api.openai.com/v1/chat/completions" : "https://api.groq.com/openai/v1/chat/completions";
-    const model = cfg.provider === "openai" ? cfg.openaiModel : cfg.groqModel;
-    const res = await fetch(url, {
+  if (cfg.provider === "anthropic") {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey.trim()}` },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
       body: JSON.stringify({
         model,
-        temperature: 0.7,
+        max_tokens: maxTokens,
+        temperature: 0.35,
+        system,
+        messages: [{ role: "user", content: user }],
+      }),
+    });
+    if (!res.ok) throw new Error(httpError(res.status, await res.text()));
+    const data = await res.json();
+    assertNotTruncated("Anthropic", data?.stop_reason);
+    const text = (data?.content ?? [])
+      .map((part: { type?: string; text?: string }) => (part?.type === "text" ? part.text ?? "" : ""))
+      .join("");
+    if (!text) throw new Error("Anthropic devolvió una respuesta vacía.");
+    return String(text).trim();
+  }
+
+  const compat = OPENAI_COMPAT[cfg.provider];
+  if (compat) {
+    const res = await fetch(`${compat.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: authHeaders(cfg.provider, key),
+      body: JSON.stringify({
+        model,
+        temperature: 0.35,
+        max_tokens: maxTokens,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -250,7 +549,9 @@ export async function askAi(cfg: AiConfig, system: string, user: string): Promis
     });
     if (!res.ok) throw new Error(httpError(res.status, await res.text()));
     const data = await res.json();
-    const text = data?.choices?.[0]?.message?.content;
+    const choice = data?.choices?.[0];
+    assertNotTruncated(providerDisplayName(cfg.provider), choice?.finish_reason);
+    const text = choice?.message?.content ?? choice?.text;
     if (!text) throw new Error("El proveedor devolvió una respuesta vacía.");
     return String(text).trim();
   }
@@ -261,8 +562,9 @@ export async function askAi(cfg: AiConfig, system: string, user: string): Promis
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: cfg.ollamaModel,
+      model,
       stream: false,
+      options: { temperature: 0.35, num_predict: maxTokens },
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
@@ -305,23 +607,30 @@ export function mapToCompactText(root: MindNode, maxNodes = 150, withNotes = fal
 
 /** Quita bloques de código markdown (```json ... ```) si los hay. */
 function normalizeText(text: string): string {
-  return text
+  return String(text ?? "")
     .replace(/\r\n/g, "\n")
-    .replace(/\n/g, "\n")
-    .replace(/\t/g, "\t")
     .replace(/\u003c/g, "<")
-    .replace(/\u003e/g, ">")
-    .replace(/`/g, "");
+    .replace(/\u003e/g, ">");
 }
 
 function stripFences(text: string): string {
-  const clean = normalizeText(text);
-  const fence = clean.match(/```[a-zA-Z]*\n?([\s\S]*?)```/);
-  return fence ? fence[1] : clean;
+  const clean = normalizeText(text).trim();
+  const fence = clean.match(/^```(?:json|javascript|ts|typescript)?\s*\n?([\s\S]*?)\n?```$/i)
+    ?? clean.match(/```(?:json|javascript|ts|typescript)?\s*\n?([\s\S]*?)\n?```/i);
+  const unfenced = fence ? fence[1] : clean;
+  return unfenced.replace(/^\s*json\s*\n/i, "").replace(/`/g, "").trim();
+}
+
+function isJsonish(text: string): boolean {
+  return /^[\[{]/.test(stripFences(text).trim());
 }
 
 function extractPlainListItems(text: string): string[] {
-  const clean = normalizeText(stripFences(text));
+  const clean = stripFences(text);
+  // Si parecía JSON y no se pudo parsear, no mostramos el JSON roto como un punto.
+  // Esto fuerza un reintento y evita resultados como: ["punto 1", "punto incompleto…
+  if (isJsonish(clean)) return [];
+
   const lines = clean
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -329,8 +638,9 @@ function extractPlainListItems(text: string): string[] {
 
   const items: string[] = [];
   for (const line of lines) {
+    if (/^[\[{]/.test(line)) continue;
     if (/^(?:[*•\-]\s*)?(?:input|output|constraint|requirement|goal|example|topic|question|answer|response|result|here is|the user|the model|i need|exactly|no extra|no markdown|only|without)\b/i.test(line)) continue;
-    if (/^(ideas?|sugerencias?|opciones?)\s*:?$/i.test(line)) continue;
+    if (/^(ideas?|sugerencias?|opciones?|puntos?|críticas?|criticas?)\s*:?$/i.test(line)) continue;
     const m = line.match(/^(?:[-*•▪◦]|\d+[.)])\s*(.+)$/)
       || line.match(/^(?:[A-Za-zÀ-ÿ0-9][^:]{0,40}?:\s*)?(.+)$/);
     if (!m) continue;
@@ -339,47 +649,85 @@ function extractPlainListItems(text: string): string[] {
       .replace(/^['"“”‘’]+|['"“”‘’]+$/g, "")
       .replace(/^[A-Za-zÀ-ÿ0-9][^:]{0,40}:\s*/, "")
       .trim();
-    if (!value || /^(aquí|resultado|respuesta|lista|ideas?|puntos?|input|output|constraint|requirement|goal|example|topic|question|answer|here is)\b/i.test(value)) continue;
+    if (!value || /^(aquí|resultado|respuesta|input|output|constraint|requirement|goal|example|topic|question|answer|here is)\b/i.test(value)) continue;
     items.push(value.replace(/\s+/g, " ").trim());
   }
   return items;
 }
 
 function extractQuestionPairs(text: string): QAItem[] {
-  const cleaned = stripFences(text).replace(/```/g, "");
+  const cleaned = stripFences(text);
   const items: QAItem[] = [];
-  const qaRegex = /(?:^|\n)\s*(?:[*•\-]\s*)?(?:\d+[.)]\s*)?(?:Q(?:uestion|uestions)?|P(?:regunta|reguntas)?)\s*[:\-]?\s*(.+?)(?:\n\s*(?:[*•\-]\s*)?(?:A(?:nswer|answers)?|R(?:espuesta|respuestas)?)\s*[:\-]?\s*(.+?))?(?=\n\s*(?:[*•\-]\s*)?(?:\d+[.)]\s*)?(?:Q(?:uestion|uestions)?|P(?:regunta|reguntas)?)\s*[:\-]?|$)/gis;
+  const qLabel = String.raw`(?:Q(?:uestion|uestions)?|P(?:regunta|reguntas)?)`;
+  const aLabel = String.raw`(?:A(?:nswer|answers)?|R(?:espuesta|respuestas)?)`;
+  const qPrefix = String.raw`(?:[*•\-]\s*)?(?:\d+[.)]\s*)?${qLabel}\s*(?:\d+)?\s*[:\-.)]?\s*`;
+  const aPrefix = String.raw`(?:[*•\-]\s*)?${aLabel}\s*(?:\d+)?\s*[:\-.)]?\s*`;
+  const qaRegex = new RegExp(
+    String.raw`(?:^|\n)\s*${qPrefix}(.+?)(?:\n\s*${aPrefix}(.+?))?(?=\n\s*${qPrefix}|$)`,
+    "gis",
+  );
   const matches = [...cleaned.matchAll(qaRegex)];
   if (matches.length > 0) {
     for (const match of matches) {
-      const q = (match[1] ?? "").replace(/^[-*•▪◦]\s*/, "").trim();
-      const a = (match[2] ?? "").replace(/^[-*•▪◦]\s*/, "").trim();
+      let q = (match[1] ?? "").replace(/^[-*•▪◦]\s*/, "").trim();
+      let a = (match[2] ?? "").replace(/^[-*•▪◦]\s*/, "").trim();
+      if (!a) {
+        const inline = q.match(new RegExp(String.raw`^(.+?)\s+${aLabel}\s*(?:\d+)?\s*[:\-.)]?\s*(.+)$`, "i"));
+        if (inline) {
+          q = inline[1].trim();
+          a = inline[2].trim();
+        }
+      }
       if (q) items.push({ q, a: a || "" });
     }
   }
   if (items.length > 0) return items;
 
-  const lines = cleaned.split(/\r?\n/);
+  const labelized = cleaned
+    .replace(new RegExp(String.raw`\s+(${qLabel}\s*\d*\s*[:\-.)])`, "gi"), "\n$1")
+    .replace(new RegExp(String.raw`\s+(${aLabel}\s*\d*\s*[:\-.)])`, "gi"), "\n$1");
+
+  const lines = labelized.split(/\r?\n/);
   let currentQ = "";
   let currentA = "";
+  const pushCurrent = () => {
+    if (currentQ) items.push({ q: currentQ.trim(), a: currentA.trim() });
+    currentQ = "";
+    currentA = "";
+  };
+
   for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;
-    if (/^(?:[*•\-]\s*)?(?:\d+[.)]\s*)?(?:Q(?:uestion|uestions)?|P(?:regunta|reguntas)?)\s*[:\-]?/i.test(line)) {
-      if (currentQ && currentA) items.push({ q: currentQ, a: currentA });
-      currentQ = line.replace(/^(?:[*•\-]\s*)?(?:\d+[.)]\s*)?(?:Q(?:uestion|uestions)?|P(?:regunta|reguntas)?)\s*[:\-]?\s*/i, "").trim();
-      currentA = "";
+    const qMatch = line.match(new RegExp(String.raw`^${qPrefix}(.+)$`, "i"));
+    if (qMatch) {
+      if (currentQ) pushCurrent();
+      currentQ = qMatch[1].trim();
       continue;
     }
-    if (/^(?:[*•\-]\s*)?(?:A(?:nswer|answers)?|R(?:espuesta|respuestas)?)\s*[:\-]?/i.test(line)) {
-      currentA = line.replace(/^(?:[*•\-]\s*)?(?:A(?:nswer|answers)?|R(?:espuesta|respuestas)?)\s*[:\-]?\s*/i, "").trim();
+    const aMatch = line.match(new RegExp(String.raw`^${aPrefix}(.+)$`, "i"));
+    if (aMatch) {
+      currentA = currentA ? `${currentA} ${aMatch[1].trim()}` : aMatch[1].trim();
       continue;
     }
-    if (currentQ && !currentA && (/^[-*•]\s*/.test(line) || /^\d+[.)]\s*/.test(line))) {
-      currentA = line.replace(/^[-*•]\s*/, "").replace(/^\d+[.)]\s*/, "").trim();
+
+    const inlineAnswer = line.match(new RegExp(String.raw`^(.+?)(?:\s+[—–-]\s+|\s+)${aLabel}\s*(?:\d+)?\s*[:\-.)]?\s*(.+)$`, "i"));
+    if (inlineAnswer) {
+      if (currentQ) pushCurrent();
+      currentQ = inlineAnswer[1].replace(/^\d+[.)]\s*/, "").trim();
+      currentA = inlineAnswer[2].trim();
+      continue;
     }
+
+    if (/^\d+[.)]\s+/.test(line) || /\?$/.test(line)) {
+      if (currentQ) pushCurrent();
+      currentQ = line.replace(/^\d+[.)]\s+/, "").trim();
+      continue;
+    }
+
+    if (currentQ) currentA = currentA ? `${currentA} ${line}` : line;
   }
-  if (currentQ) items.push({ q: currentQ, a: currentA });
+  if (currentQ) pushCurrent();
   return items;
 }
 
@@ -396,19 +744,69 @@ function tryParseJson(raw: string): unknown {
   }
 }
 
+function arrayFromParsed(parsed: unknown): unknown[] | null {
+  if (Array.isArray(parsed)) return parsed;
+  if (!parsed || typeof parsed !== "object") return null;
+  const record = parsed as Record<string, unknown>;
+  const preferredKeys = ["items", "ideas", "suggestions", "sugerencias", "points", "puntos", "questions", "preguntas", "results", "resultado", "data"];
+  for (const key of preferredKeys) {
+    if (Array.isArray(record[key])) return record[key] as unknown[];
+  }
+  for (const value of Object.values(record)) {
+    if (Array.isArray(value)) return value;
+  }
+  return null;
+}
+
+function balancedJsonSnippets(text: string, open: "[" | "{", close: "]" | "}"): string[] {
+  const snippets: string[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== open) continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === open) depth++;
+      else if (ch === close) {
+        depth--;
+        if (depth === 0) {
+          snippets.push(text.slice(i, j + 1));
+          break;
+        }
+      }
+    }
+  }
+  return snippets;
+}
+
+function uniqueByContent(values: string[]): string[] {
+  return [...new Set(values.map((v) => v.trim()).filter(Boolean))];
+}
+
 function extractArray(text: string): unknown[] {
   const clean = stripFences(text);
-  const candidates = [
-    ...new Set([
-      ...Array.from(clean.matchAll(/\[[\s\S]*?\]/g)).map((m) => m[0]),
-      ...Array.from(clean.matchAll(/\{[\s\S]*?\}/g)).map((m) => m[0]),
-    ]),
-  ].filter((candidate) => candidate.length > 2 && (candidate.startsWith("[") || candidate.startsWith("{")));
+  const candidates = uniqueByContent([
+    clean,
+    ...balancedJsonSnippets(clean, "[", "]").sort((a, b) => b.length - a.length),
+    ...balancedJsonSnippets(clean, "{", "}").sort((a, b) => b.length - a.length),
+  ]).filter((candidate) => candidate.length > 2 && /^[\[{]/.test(candidate));
 
   for (const candidate of candidates) {
     try {
       const parsed = tryParseJson(candidate);
-      if (Array.isArray(parsed)) return parsed;
+      const array = arrayFromParsed(parsed);
+      if (array) return array;
     } catch {
       // intenta con el siguiente candidato
     }
@@ -416,15 +814,14 @@ function extractArray(text: string): unknown[] {
 
   const start = clean.indexOf("[");
   const end = clean.lastIndexOf("]");
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error("La respuesta no tiene el formato esperado (lista).");
-  }
-
-  try {
-    const parsed = tryParseJson(clean.slice(start, end + 1));
-    if (Array.isArray(parsed)) return parsed;
-  } catch {
-    // no es un JSON directo, pero seguimos con el fallback textual
+  if (start !== -1 && end !== -1 && end > start) {
+    try {
+      const parsed = tryParseJson(clean.slice(start, end + 1));
+      const array = arrayFromParsed(parsed);
+      if (array) return array;
+    } catch {
+      // no es un JSON directo, pero seguimos con el error claro
+    }
   }
 
   throw new Error("La respuesta no tiene el formato esperado (lista).");
