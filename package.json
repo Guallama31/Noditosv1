@@ -1,32 +1,35 @@
 {
-  "name": "sandbox-workspace",
+  "name": "noditos",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.1.0-beta.0",
+  "description": "Editor local-first de mapas mentales con importación, exportación y asistencia de IA opcional.",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Guallama31/Noditosv1.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Guallama31/Noditosv1/issues"
+  },
+  "homepage": "https://github.com/Guallama31/Noditosv1#readme",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm run build",
+    "sbom": "npm sbom --sbom-format=cyclonedx"
   },
   "dependencies": {
-    "@dnd-kit/core": "^6.1.0",
-    "@dnd-kit/sortable": "^8.0.0",
-    "@dnd-kit/utilities": "^3.2.2",
-    "@supabase/supabase-js": "^2.98.0",
-    "canvas-confetti": "^1.9.3",
-    "date-fns": "^2.30.0",
     "docx": "^9.7.1",
-    "framer-motion": "^11.16.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.294.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "recharts": "^2.10.0"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.7",
-    "@types/canvas-confetti": "^1.6.4",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.3.4",

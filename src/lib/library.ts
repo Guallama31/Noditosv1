@@ -1,6 +1,7 @@
 import type { MindNode } from "../types";
 import { countNodes, createNode, sanitizeNode, uid } from "./tree";
 import { BRANCH_COLORS } from "./layout";
+import { IMPORT_LIMITS, assertMindMapLimits, assertTextSize } from "./importLimits";
 
 export interface StoredMap {
   id: string;
@@ -281,6 +282,7 @@ export function createLibraryBackup(data: LibraryDataShape): string {
 }
 
 export function parseLibraryBackup(content: string): LibraryDataShape {
+  assertTextSize(content, IMPORT_LIMITS.backupFileBytes, "backup");
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -289,7 +291,24 @@ export function parseLibraryBackup(content: string): LibraryDataShape {
   }
   const obj = (parsed ?? {}) as Record<string, unknown>;
   const data = obj.app === BACKUP_APP ? obj.data : obj;
-  const normalized = normalizeLibrary(data);
+  const rawData = (data ?? {}) as Record<string, unknown>;
+  if (!rawData || typeof rawData !== "object" || !Array.isArray(rawData.maps)) {
+    throw new Error("El archivo no parece un backup de Noditos.");
+  }
+  const maps = rawData.maps;
+  const trash = Array.isArray(rawData.trash) ? rawData.trash : [];
+  const versions = Array.isArray(rawData.versions) ? rawData.versions : [];
+  if (maps.length + trash.length > IMPORT_LIMITS.mapsPerBackup) {
+    throw new Error(`El backup supera el límite de ${IMPORT_LIMITS.mapsPerBackup.toLocaleString("es-AR")} mapas.`);
+  }
+  if (versions.length > IMPORT_LIMITS.versionsPerBackup) {
+    throw new Error(`El backup supera el límite de ${IMPORT_LIMITS.versionsPerBackup.toLocaleString("es-AR")} versiones.`);
+  }
+  for (const entry of [...maps, ...trash, ...versions]) {
+    const root = (entry ?? {}) as Record<string, unknown>;
+    if (root.root) assertMindMapLimits(root.root);
+  }
+  const normalized = normalizeLibrary(rawData);
   if (!normalized) throw new Error("El archivo no parece un backup de Noditos.");
   return normalized;
 }

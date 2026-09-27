@@ -12,13 +12,32 @@ Programa para organizar ideas con mapas mentales, biblioteca local e importació
 - Importación/exportación: Freeplane/Freemind `.mm`, JSON, OPML, Markdown, texto y Word `.docx`.
 - Búsqueda y reemplazo con `Ctrl+F` en textos, notas, etiquetas, tipos de nodo y fechas.
 - Metadatos de tareas: etiquetas, estado, prioridad, fechas, responsable, progreso, categoría, riesgo y revisión.
-- Imágenes optimizadas antes de guardarse, arrastrar/soltar, pegado desde portapapeles e imágenes por URL.
-- Enlaces compartibles con el mapa embebido para mapas livianos.
-- Ayudante IA opcional con claves guardables localmente o solo por sesión.
+- Imágenes optimizadas antes de guardarse, arrastrar/soltar, pegado desde portapapeles e imágenes por URL. Las imágenes remotas pueden contactar al servidor externo y dejar de estar disponibles.
+- Enlaces portables con el mapa codificado dentro de la URL para mapas livianos. **No están cifrados:** cualquiera con el enlace puede leer el mapa.
+- Ayudante IA opcional. Al usar un proveedor cloud, el contenido seleccionado se envía a ese tercero y puede generar costes o respuestas incorrectas.
 
-## Ejecutable para usuarios finales
+## Estado de publicación
 
-Ver **[README-EJECUTABLE.md](README-EJECUTABLE.md)**: `release/Noditos.exe` ya viene compilado en el repo — doble clic y la app se abre en el navegador.
+Noditos está en preparación para una **beta** y todavía no debe considerarse una versión estable para público general. Consultá:
+
+- [Decisiones de producto](DECISIONES-PRODUCTO.md)
+- [Backlog de publicación](BACKLOG-PUBLICACION.md)
+- [Auditoría de publicación](AUDITORIA-PUBLICACION.md)
+- [Plan de publicación](PLAN-PUBLICACION.md)
+- [Aviso de privacidad de beta](PRIVACIDAD-BETA.md)
+- [Condiciones de beta](TERMINOS-BETA.md)
+- [Política de seguridad](SECURITY.md)
+- [Avisos de terceros](THIRD_PARTY_NOTICES.md)
+
+La licencia definitiva, la identidad pública del editor, la firma Authenticode y el compromiso de soporte aún están pendientes. Mientras tanto el proyecto se declara `UNLICENSED`: que el repositorio sea público no concede permiso general para reutilizar o redistribuir el código.
+
+## Datos y backups
+
+Los mapas viven en el `localStorage` del perfil de navegador que abre Noditos. Pueden perderse si se eliminan los datos del navegador, se cambia de perfil o se daña el almacenamiento. Exportá backups regularmente y comprobá que puedan restaurarse. Las funciones de IA, Google Fonts y las imágenes por URL pueden generar conexiones externas; se está trabajando para reducirlas y hacerlas explícitas.
+
+## Ejecutable para pruebas
+
+Ver **[README-EJECUTABLE.md](README-EJECUTABLE.md)**. El archivo actual es una build de prueba sin firma digital; no es todavía el canal de una versión estable.
 
 ## Desarrollo
 

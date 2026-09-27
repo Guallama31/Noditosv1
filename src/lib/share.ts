@@ -1,5 +1,6 @@
 import type { MindNode } from "../types";
 import { sanitizeNode } from "./tree";
+import { IMPORT_LIMITS, assertMindMapLimits } from "./importLimits";
 
 const SHARE_PREFIX = "#map=";
 const SHARE_APP = "NoditosShare";
@@ -26,11 +27,12 @@ export function createShareUrl(root: MindNode, title: string, baseUrl = window.l
 }
 
 export function parseShareHash(hash = window.location.hash): { root: MindNode; title: string } | null {
-  if (!hash.startsWith(SHARE_PREFIX)) return null;
+  if (!hash.startsWith(SHARE_PREFIX) || hash.length > IMPORT_LIMITS.shareHashChars) return null;
   try {
     const decoded = decodeUnicode(hash.slice(SHARE_PREFIX.length));
     const obj = JSON.parse(decoded) as Record<string, unknown>;
     if (obj.app !== SHARE_APP || !obj.root) return null;
+    assertMindMapLimits(obj.root);
     return {
       root: sanitizeNode(obj.root),
       title: typeof obj.title === "string" && obj.title.trim() ? obj.title : "Mapa compartido",

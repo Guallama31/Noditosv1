@@ -25,6 +25,7 @@ import {
   type AiProvider,
   type FetchedModel,
 } from "../lib/ai";
+import { clearLocalGemini, configureLocalGemini } from "../lib/localAiProxy";
 
 type FetchState =
   | { status: "idle" }
@@ -85,9 +86,17 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const save = () => {
-    saveAiConfig(cfg);
-    onBack();
+  const save = async () => {
+    setTestResult(null);
+    try {
+      if (cfg.provider === "gemini" && currentApiKey) {
+        await configureLocalGemini(currentApiKey);
+      }
+      saveAiConfig(cfg);
+      onBack();
+    } catch {
+      setTestResult("fail");
+    }
   };
 
   const inputCls =
@@ -180,18 +189,25 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
                   {showKey ? "Ocultar" : "Mostrar"}
                 </button>
               </div>
-              <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-[#c08a2e]/25 bg-[#c08a2e]/8 px-3 py-2 text-[12px] leading-snug text-ink-600">
-                <input
-                  type="checkbox"
-                  checked={cfg.saveApiKey}
-                  onChange={(e) => setCfg((c) => ({ ...c, saveApiKey: e.target.checked }))}
-                  className="mt-0.5 h-3.5 w-3.5 accent-[#b54a33]"
-                />
-                <span>
-                  <strong>Recordar clave en este navegador.</strong>{" "}
-                  Si lo desactivás, la clave solo se conserva hasta cerrar esta pestaña y no queda en localStorage.
-                </span>
-              </label>
+              {cfg.provider === "gemini" ? (
+                <p className="mt-2 rounded-lg border border-ok/25 bg-ok/8 px-3 py-2 text-[12px] leading-snug text-ink-600">
+                  <strong>Almacenamiento más seguro:</strong>{" "}
+                  la clave se envía una vez al servidor local de Noditos y vive sólo en memoria hasta detener el programa. No se guarda en localStorage ni sessionStorage.
+                </p>
+              ) : (
+                <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-[#c08a2e]/25 bg-[#c08a2e]/8 px-3 py-2 text-[12px] leading-snug text-ink-600">
+                  <input
+                    type="checkbox"
+                    checked={cfg.saveApiKey}
+                    onChange={(e) => setCfg((c) => ({ ...c, saveApiKey: e.target.checked }))}
+                    className="mt-0.5 h-3.5 w-3.5 accent-[#b54a33]"
+                  />
+                  <span>
+                    <strong>Migración pendiente:</strong>{" "}
+                    este proveedor todavía usa almacenamiento del navegador. Preferí no recordar la clave hasta que su proxy local esté disponible.
+                  </span>
+                </label>
+              )}
               {provider.keyUrl && (
                 <a
                   href={provider.keyUrl}
@@ -345,13 +361,15 @@ export function AiSettingsScreen({ onBack }: { onBack: () => void }) {
         </div>
 
         <p className="card-in mt-4 text-center text-[11.5px] text-ink-400" style={{ animationDelay: "200ms" }}>
-          Las claves nunca se imprimen en logs de Noditos. Si elegís recordarlas, quedan en localStorage;
-          si no, se guardan temporalmente en sessionStorage y se pierden al cerrar la pestaña.
+          Gemini usa el proxy local y conserva la clave sólo en memoria. Los demás proveedores están pendientes de migración y no deben usarse con información sensible durante la beta.
         </p>
 
         {configured && (
           <button
-            onClick={() => {
+            onClick={async () => {
+              if (cfg.provider === "gemini") {
+                try { await clearLocalGemini(); } catch { /* el servidor puede haberse detenido */ }
+              }
               saveAiConfig(defaultAiConfig());
               setCfg(defaultAiConfig());
             }}

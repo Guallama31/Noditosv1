@@ -114,7 +114,7 @@ if [ "$TARGET_PLATFORM" = win ]; then
 fi
 
 echo "  [6/6] Inyectando el blob en el ejecutable (postject)..."
-npx --yes postject@1.0.0-alpha.6 "$OUT" NODE_SEA_BLOB "$STAGE/sea-prep.blob" \
+node node_modules/postject/dist/cli.js "$OUT" NODE_SEA_BLOB "$STAGE/sea-prep.blob" \
   --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 --overwrite
 
 echo ""

@@ -76,8 +76,10 @@ revisá `Noditos-servidor.log` junto al `.exe`; ahí queda registrado cualquier
 error.
 
 **¿Dónde viven los mapas del usuario?**
-En el navegador de cada usuario (localStorage). Para compartir trabajo entre
-PCs se usa Exportar/Importar (el `.json` conserva absolutamente todo).
+En el perfil del navegador de cada usuario (`localStorage`). Puede perderse al
+borrar los datos del navegador o cambiar de perfil. Para mover o respaldar el
+trabajo se usa Exportar/Importar; verificá el backup después de crearlo y antes
+de borrar el original.
 
 **El .exe solo funciona en Windows de 64 bits.**
 Sí. Para otros sistemas se puede correr con Node: `npx vite build && node
