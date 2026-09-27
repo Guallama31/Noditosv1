@@ -1,5 +1,13 @@
 import type { MindNode, NodeMeta } from "../types";
 import { countNodes, createNode, sanitizeNode } from "./tree";
+import {
+  IMPORT_LIMITS,
+  assertDocxXmlSize,
+  assertFileSize,
+  assertMindMapLimits,
+  assertTextSize,
+  assertZipLimits,
+} from "./importLimits";
 
 export type ExportFormat = "mm" | "md" | "json" | "opml" | "txt" | "docx";
 
@@ -270,7 +278,9 @@ function parseMM(content: string): { root: MindNode; title?: string } {
   if (doc.getElementsByTagName("parsererror").length > 0) throw new Error("El archivo no es un XML válido.");
   const nodeEl = doc.getElementsByTagName("node")[0];
   if (!nodeEl) throw new Error("No se encontró ningún nodo en el archivo .mm");
-  return { root: sanitizeNode(fromMMElement(nodeEl)) };
+  const rawRoot = fromMMElement(nodeEl);
+  assertMindMapLimits(rawRoot);
+  return { root: sanitizeNode(rawRoot) };
 }
 
 function fromOutline(el: Element): MindNode {
@@ -295,7 +305,9 @@ function parseOPML(content: string): { root: MindNode; title?: string } {
   const outlineEl = doc.getElementsByTagName("outline")[0];
   if (!outlineEl) throw new Error("El OPML no contiene ningún esquema.");
   const title = doc.getElementsByTagName("title")[0]?.textContent?.trim() || undefined;
-  return { root: sanitizeNode(fromOutline(outlineEl)), title };
+  const rawRoot = fromOutline(outlineEl);
+  assertMindMapLimits(rawRoot);
+  return { root: sanitizeNode(rawRoot), title };
 }
 
 function parseJSON(content: string): { root: MindNode; title?: string } {
@@ -311,6 +323,7 @@ function parseJSON(content: string): { root: MindNode; title?: string } {
     throw new Error("El JSON no tiene estructura de mapa de Noditos.");
   }
   const title = typeof record.title === "string" && record.title ? record.title : undefined;
+  assertMindMapLimits(rawRoot);
   return { root: sanitizeNode(rawRoot), title };
 }
 
@@ -438,7 +451,9 @@ function parseMarkdown(content: string, fallbackTitle = "Documento Markdown"): {
   }
 
   if (items.length === 0) return parseTextOutline(content, fallbackTitle);
-  const root = sanitizeNode(buildImportedTree(items, title ?? fallbackTitle));
+  const imported = buildImportedTree(items, title ?? fallbackTitle);
+  assertMindMapLimits(imported);
+  const root = sanitizeNode(imported);
   return { root, title };
 }
 
@@ -475,11 +490,14 @@ function parseTextOutline(content: string, fallbackTitle = "Documento de texto")
   }
 
   if (items.length === 0) throw new Error("El texto no contiene líneas importables.");
-  const root = sanitizeNode(buildImportedTree(items, fallbackTitle));
+  const imported = buildImportedTree(items, fallbackTitle);
+  assertMindMapLimits(imported);
+  const root = sanitizeNode(imported);
   return { root, title: root.text.trim() || undefined };
 }
 
 export function parseFile(filename: string, content: string): { root: MindNode; title?: string } {
+  assertTextSize(content);
   const name = filename.toLowerCase();
   const fallbackTitle = filename.replace(/\.[^.]+$/, "");
   if (name.endsWith(".json")) return parseJSON(content);
@@ -546,6 +564,7 @@ function parseDocxXml(xml: string): DocxLine[] {
 }
 
 export async function parseDocxFile(file: File): Promise<{ root: MindNode; title?: string }> {
+  assertFileSize(file, IMPORT_LIMITS.docxFileBytes, "documento DOCX");
   const JSZip = (await import("jszip")).default;
   let zip;
   try {
@@ -553,8 +572,10 @@ export async function parseDocxFile(file: File): Promise<{ root: MindNode; title
   } catch {
     throw new Error("El archivo no parece un .docx válido.");
   }
+  assertZipLimits(zip.files);
   const docXml = await zip.file("word/document.xml")?.async("string");
   if (!docXml) throw new Error("El .docx no contiene un documento legible.");
+  assertDocxXmlSize(docXml);
   const lines = parseDocxXml(docXml);
   if (lines.length === 0) throw new Error("El documento no tiene texto.");
 
@@ -579,15 +600,20 @@ export async function parseDocxFile(file: File): Promise<{ root: MindNode; title
   }
 
   // Si hay una única raíz, úsala como raíz del mapa; si no, el nombre del archivo.
-  if (children.length === 1) {
-    return { root: children[0], title: title ?? children[0].text.trim().slice(0, 60) };
-  }
-  return { root: createNode(title ?? "Documento importado", {}, children), title };
+  const root = children.length === 1
+    ? children[0]
+    : createNode(title ?? "Documento importado", {}, children);
+  assertMindMapLimits(root);
+  return {
+    root,
+    title: children.length === 1 ? title ?? children[0].text.trim().slice(0, 60) : title,
+  };
 }
 
 /** Punto de entrada único: detecta el formato por extensión/contenido. */
 export async function parseAnyFile(file: File): Promise<{ root: MindNode; title?: string }> {
   if (file.name.toLowerCase().endsWith(".docx")) return parseDocxFile(file);
+  assertFileSize(file, IMPORT_LIMITS.textFileBytes);
   const text = await file.text();
   return parseFile(file.name, text);
 }

@@ -24,6 +24,11 @@ const DETACHED_FLAG = "NODITOS_DETACHED";
 const HOST = "127.0.0.1";
 const TOKEN = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 const TOKEN_PLACEHOLDER = "__NODITOS_STOP_TOKEN__";
+const MAX_API_BODY = 256 * 1024;
+const MAX_AI_INPUT = 250_000;
+const MAX_UPSTREAM_RESPONSE = 4 * 1024 * 1024;
+const AI_TIMEOUT_MS = 45_000;
+const aiSecrets = { gemini: "" };
 
 function portArg() {
   const a = args.find((x) => x.startsWith("--port="));
@@ -223,9 +228,192 @@ function findFreePort(start, cb) {
   });
 }
 
+function requestOrigin(req, port) {
+  return `http://${HOST}:${port}`;
+}
+
+function authorizeLocalApi(req, port) {
+  const expectedOrigin = requestOrigin(req, port);
+  const hostOk = req.headers.host === `${HOST}:${port}`;
+  const originOk = req.headers.origin === expectedOrigin;
+  const tokenOk = req.headers["x-noditos-token"] === TOKEN;
+  return hostOk && originOk && tokenOk;
+}
+
+function readJsonBody(req, maxBytes = MAX_API_BODY) {
+  return new Promise((resolve, reject) => {
+    const contentType = String(req.headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
+    if (contentType !== "application/json") {
+      reject(Object.assign(new Error("content-type inválido"), { statusCode: 415 }));
+      return;
+    }
+    const declared = Number(req.headers["content-length"] || 0);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      reject(Object.assign(new Error("cuerpo demasiado grande"), { statusCode: 413 }));
+      req.resume();
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(Object.assign(new Error("cuerpo demasiado grande"), { statusCode: 413 }));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"));
+      } catch {
+        reject(Object.assign(new Error("JSON inválido"), { statusCode: 400 }));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+async function readUpstreamJson(response) {
+  const declared = Number(response.headers.get("content-length") || 0);
+  if (Number.isFinite(declared) && declared > MAX_UPSTREAM_RESPONSE) {
+    throw new Error("La respuesta del proveedor es demasiado grande.");
+  }
+  const text = await response.text();
+  if (Buffer.byteLength(text) > MAX_UPSTREAM_RESPONSE) {
+    throw new Error("La respuesta del proveedor es demasiado grande.");
+  }
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("El proveedor devolvió una respuesta inválida.");
+  }
+  if (!response.ok) {
+    const message = response.status === 401 || response.status === 403
+      ? "La clave de Gemini fue rechazada."
+      : response.status === 429
+        ? "Gemini alcanzó su límite de uso."
+        : `Gemini devolvió un error (${response.status}).`;
+    throw Object.assign(new Error(message), { statusCode: 502, upstreamStatus: response.status });
+  }
+  return data;
+}
+
+async function geminiFetch(pathname, options = {}) {
+  const key = aiSecrets.gemini;
+  if (!key) throw Object.assign(new Error("Gemini no está configurado en esta sesión."), { statusCode: 409 });
+  const separator = pathname.includes("?") ? "&" : "?";
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com${pathname}${separator}key=${encodeURIComponent(key)}`,
+    { ...options, signal: AbortSignal.timeout(AI_TIMEOUT_MS) },
+  );
+  return readUpstreamJson(response);
+}
+
+async function handleAiApi(req, res, pathname, port) {
+  if (!authorizeLocalApi(req, port)) {
+    sendJson(res, 403, { error: "solicitud local no autorizada" });
+    return;
+  }
+
+  try {
+    if (pathname === "/__noditos/ai/status" && req.method === "GET") {
+      sendJson(res, 200, { providers: { gemini: Boolean(aiSecrets.gemini) } });
+      return;
+    }
+    if (pathname === "/__noditos/ai/config/gemini" && req.method === "PUT") {
+      const body = await readJsonBody(req, 32 * 1024);
+      const key = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+      if (key.length < 10 || key.length > 4096) {
+        sendJson(res, 400, { error: "clave de Gemini inválida" });
+        return;
+      }
+      aiSecrets.gemini = key;
+      sendJson(res, 200, { ok: true, provider: "gemini", configured: true });
+      return;
+    }
+    if (pathname === "/__noditos/ai/config/gemini" && req.method === "DELETE") {
+      aiSecrets.gemini = "";
+      sendJson(res, 200, { ok: true, provider: "gemini", configured: false });
+      return;
+    }
+    if (pathname === "/__noditos/ai/models/gemini" && req.method === "GET") {
+      const data = await geminiFetch("/v1beta/models");
+      const models = (Array.isArray(data.models) ? data.models : [])
+        .filter((model) => Array.isArray(model.supportedGenerationMethods) && model.supportedGenerationMethods.includes("generateContent"))
+        .map((model) => ({ id: String(model.name || "").replace(/^models\//, ""), label: String(model.displayName || model.name || "") }))
+        .filter((model) => model.id);
+      sendJson(res, 200, { models });
+      return;
+    }
+    if (pathname === "/__noditos/ai/chat/gemini" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const model = typeof body.model === "string" ? body.model.trim().replace(/^models\//, "") : "";
+      const system = typeof body.system === "string" ? body.system : "";
+      const user = typeof body.user === "string" ? body.user : "";
+      const maxTokens = Math.max(1, Math.min(4096, Number(body.maxTokens) || 1600));
+      if (!/^[a-zA-Z0-9._:-]+$/.test(model) || !user.trim()) {
+        sendJson(res, 400, { error: "modelo o mensaje inválido" });
+        return;
+      }
+      if (system.length + user.length > MAX_AI_INPUT) {
+        sendJson(res, 413, { error: "el contexto de IA es demasiado grande" });
+        return;
+      }
+      const data = await geminiFetch(`/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{ role: "user", parts: [{ text: user }] }],
+          generationConfig: { temperature: 0.35, maxOutputTokens: maxTokens },
+        }),
+      });
+      const candidate = data && data.candidates && data.candidates[0];
+      const text = candidate && candidate.content && Array.isArray(candidate.content.parts)
+        ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
+        : "";
+      if (!text) throw Object.assign(new Error("Gemini devolvió una respuesta vacía."), { statusCode: 502 });
+      sendJson(res, 200, { text, finishReason: candidate.finishReason || "" });
+      return;
+    }
+
+    res.writeHead(405, { "Allow": "GET, PUT, POST, DELETE", "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ error: "método o endpoint no permitido" }));
+  } catch (error) {
+    const status = Number(error && error.statusCode) || (error && error.name === "TimeoutError" ? 504 : 502);
+    const safeMessage = status >= 500 ? "No se pudo completar la solicitud al proveedor de IA." : String(error.message || "solicitud inválida");
+    log(`IA Gemini: solicitud fallida (${status}${error && error.upstreamStatus ? `, upstream ${error.upstreamStatus}` : ""}).`);
+    if (!res.headersSent) sendJson(res, status, { error: safeMessage });
+  }
+}
+
 /* ---------- servidor ---------- */
 function startServer(port) {
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
+    const expectedHost = `${HOST}:${port}`;
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; " +
+      "script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; " +
+      "img-src 'self' data: blob: https:; " +
+      "connect-src 'self' http://localhost:11434 http://127.0.0.1:11434 " +
+      "https://api.openai.com https://api.anthropic.com https://api.groq.com https://api.mistral.ai " +
+      "https://openrouter.ai https://api.deepseek.com https://api.x.ai https://api.together.xyz " +
+      "https://api.perplexity.ai https://api.fireworks.ai https://api.cerebras.ai;",
+    );
+    if (req.headers.host !== expectedHost) {
+      res.writeHead(421, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "host no permitido" }));
+      return;
+    }
     const url = new URL(req.url, `http://${HOST}:${port}`);
     let pathname;
     try {
@@ -237,6 +425,11 @@ function startServer(port) {
     }
     log(`${req.method} ${pathname}`);
 
+    if (pathname.startsWith("/__noditos/ai/")) {
+      await handleAiApi(req, res, pathname, port);
+      return;
+    }
+
     if (pathname === "/__noditos/ping") {
       sendJson(res, 200, { app: "noditos", version: 1, build: BUILD_TAG });
       return;
@@ -247,8 +440,8 @@ function startServer(port) {
         res.end(JSON.stringify({ error: "método no permitido" }));
         return;
       }
-      if (url.searchParams.get("token") !== TOKEN) {
-        sendJson(res, 403, { error: "token inválido" });
+      if (!authorizeLocalApi(req, port)) {
+        sendJson(res, 403, { error: "solicitud local no autorizada" });
         return;
       }
       sendJson(res, 200, { ok: true, bye: true });
@@ -278,6 +471,7 @@ function startServer(port) {
       }
       if (servePath === "index.html") {
         const html = buf.toString("utf8").replace(TOKEN_PLACEHOLDER, TOKEN);
+        res.setHeader("Cache-Control", "no-store");
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(html);
         return;

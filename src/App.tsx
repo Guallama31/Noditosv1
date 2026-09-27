@@ -27,6 +27,7 @@ import {
 } from "./lib/library";
 import { download } from "./lib/formats";
 import { clearShareHash, parseShareHash } from "./lib/share";
+import { IMPORT_LIMITS, assertFileSize } from "./lib/importLimits";
 
 type ConfirmState = { kind: "delete"; map: StoredMap } | { kind: "stop" } | null;
 
@@ -136,7 +137,10 @@ function AppInner() {
     if (!stopToken) return;
     flushRef.current();
     try {
-      await fetch(`/__noditos/stop?token=${encodeURIComponent(stopToken)}`, { method: "POST" });
+      await fetch("/__noditos/stop", {
+        method: "POST",
+        headers: { "X-Noditos-Token": stopToken },
+      });
     } catch {
       /* el servidor ya salió */
     }
@@ -236,6 +240,7 @@ function AppInner() {
   const handleImportBackup = useCallback(
     async (file: File) => {
       try {
+        assertFileSize(file, IMPORT_LIMITS.backupFileBytes, "backup");
         const incoming = parseLibraryBackup(await file.text());
         const merged = mergeLibraryData(dataRef.current, incoming);
         persist(merged);

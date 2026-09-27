@@ -1,4 +1,10 @@
 import type { MindNode } from "../types";
+import {
+  askLocalGemini,
+  configureLocalGemini,
+  fetchLocalGeminiModels,
+  hasLocalAiProxy,
+} from "./localAiProxy";
 
 export type AiProvider =
   | "gemini"
@@ -31,6 +37,8 @@ export interface AiConfig {
   ollamaModel: string;
   /** Modelo elegido por proveedor (incluye proveedores nuevos). */
   modelByProvider: Partial<Record<AiProvider, string>>;
+  /** Estado no secreto: proveedores configurados en el proceso local actual. */
+  configuredProviders: AiProvider[];
 }
 
 export interface ProviderDef {
@@ -136,6 +144,9 @@ function normalizeConfig(input?: Partial<AiConfig>): AiConfig {
     groqModel: modelByProvider.groq ?? DEFAULT_MODELS.groq,
     ollamaUrl: input?.ollamaUrl ?? defaults.ollamaUrl,
     ollamaModel: modelByProvider.ollama ?? DEFAULT_MODELS.ollama,
+    configuredProviders: Array.isArray(input?.configuredProviders)
+      ? input.configuredProviders.filter(isAiProvider)
+      : [],
   };
   cfg.apiKey = providerApiKey(cfg, cfg.provider);
   return cfg;
@@ -146,13 +157,14 @@ export function defaultAiConfig(): AiConfig {
     provider: "gemini",
     apiKey: "",
     apiKeys: {},
-    saveApiKey: true,
+    saveApiKey: false,
     geminiModel: DEFAULT_MODELS.gemini,
     openaiModel: DEFAULT_MODELS.openai,
     groqModel: DEFAULT_MODELS.groq,
     ollamaUrl: OLLAMA_DEFAULT_URL,
     ollamaModel: DEFAULT_MODELS.ollama,
     modelByProvider: { ...DEFAULT_MODELS },
+    configuredProviders: [],
   };
 }
 
@@ -209,6 +221,24 @@ export function loadAiConfig(): AiConfig {
       if (legacySessionKey && !cfg.apiKeys[cfg.provider]) cfg.apiKeys[cfg.provider] = legacySessionKey;
       cfg.apiKey = providerApiKey(cfg, cfg.provider);
     }
+
+    // Migración defensiva: retirar cualquier clave Gemini guardada por versiones anteriores.
+    // Se mantiene sólo en este objeto en memoria para que el usuario pueda configurar el proxy.
+    const legacyGeminiKey = providerApiKey(cfg, "gemini");
+    if (legacyGeminiKey) {
+      const persistedKeys = { ...(cfg.apiKeys ?? {}) };
+      delete persistedKeys.gemini;
+      localStorage.setItem(AI_KEY, JSON.stringify({
+        ...cfg,
+        apiKey: cfg.provider === "gemini" ? "" : cfg.apiKey,
+        apiKeys: persistedKeys,
+        saveApiKey: cfg.provider === "gemini" ? false : cfg.saveApiKey,
+      }));
+      const sessionKeys = readSessionKeys();
+      delete sessionKeys.gemini;
+      sessionStorage.setItem(AI_SESSION_KEYS, JSON.stringify(sessionKeys));
+      if (cfg.provider === "gemini") sessionStorage.removeItem(AI_SESSION_KEY);
+    }
     return cfg;
   } catch {
     /* sin config */
@@ -219,8 +249,32 @@ export function loadAiConfig(): AiConfig {
 export function saveAiConfig(cfg: AiConfig) {
   try {
     const normalized = normalizeConfig(cfg);
+    const geminiKey = providerApiKey(normalized, "gemini");
+    if (geminiKey && !normalized.configuredProviders.includes("gemini")) {
+      normalized.configuredProviders = [...normalized.configuredProviders, "gemini"];
+    }
+
+    // Gemini se configura en el proceso local y jamás se persiste en Web Storage.
+    const keysWithoutGemini = { ...(normalized.apiKeys ?? {}) };
+    delete keysWithoutGemini.gemini;
+    if (normalized.provider === "gemini") {
+      const persistable: AiConfig = {
+        ...normalized,
+        apiKey: "",
+        apiKeys: keysWithoutGemini,
+        saveApiKey: false,
+      };
+      localStorage.setItem(AI_KEY, JSON.stringify(persistable));
+      const sessionKeys = readSessionKeys();
+      delete sessionKeys.gemini;
+      sessionStorage.setItem(AI_SESSION_KEYS, JSON.stringify(sessionKeys));
+      sessionStorage.removeItem(AI_SESSION_KEY);
+      return;
+    }
+
+    // Compatibilidad temporal: los demás proveedores se migrarán al proxy en el siguiente epic.
     if (normalized.saveApiKey) {
-      localStorage.setItem(AI_KEY, JSON.stringify(normalized));
+      localStorage.setItem(AI_KEY, JSON.stringify({ ...normalized, apiKeys: keysWithoutGemini }));
       sessionStorage.removeItem(AI_SESSION_KEY);
       sessionStorage.removeItem(AI_SESSION_KEYS);
       return;
@@ -228,7 +282,9 @@ export function saveAiConfig(cfg: AiConfig) {
 
     const persistable: AiConfig = { ...normalized, apiKey: "", apiKeys: {} };
     localStorage.setItem(AI_KEY, JSON.stringify(persistable));
-    sessionStorage.setItem(AI_SESSION_KEYS, JSON.stringify(normalized.apiKeys ?? {}));
+    const sessionKeys = { ...(normalized.apiKeys ?? {}) };
+    delete sessionKeys.gemini;
+    sessionStorage.setItem(AI_SESSION_KEYS, JSON.stringify(sessionKeys));
     sessionStorage.setItem(AI_SESSION_KEY, providerApiKey(normalized));
   } catch {
     /* almacenamiento no disponible */
@@ -237,6 +293,9 @@ export function saveAiConfig(cfg: AiConfig) {
 
 export function isAiConfigured(cfg: AiConfig): boolean {
   if (cfg.provider === "ollama") return cfg.ollamaUrl.trim().length > 0;
+  if (cfg.provider === "gemini") {
+    return providerApiKey(cfg, "gemini").length > 0 || cfg.configuredProviders.includes("gemini");
+  }
   return providerApiKey(cfg).length > 0;
 }
 
@@ -380,17 +439,16 @@ export async function fetchProviderModels(cfg: AiConfig): Promise<FetchedModel[]
   const key = providerApiKey(cfg);
 
   if (cfg.provider === "gemini") {
-    if (!key) throw new Error("Ingresá tu clave de Google AI Studio para consultar los modelos.");
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`);
-    if (!res.ok) throw new Error(httpError(res.status, await res.text()));
-    const data = await res.json();
-    const raw = (data.models ?? []) as Array<{ name: string; displayName?: string; supportedGenerationMethods?: string[] }>;
+    if (!hasLocalAiProxy()) {
+      throw new Error("Gemini requiere abrir Noditos desde su servidor local; el modo Vite no expone claves al navegador.");
+    }
+    if (key) await configureLocalGemini(key);
+    const raw = await fetchLocalGeminiModels();
     const models = raw
-      .filter((m) => (m.supportedGenerationMethods ?? []).includes("generateContent"))
       .map((m) => {
-        const id = m.name.replace(/^models\//, "");
+        const id = m.id.replace(/^models\//, "");
         const free = /flash|lite|gemma/i.test(id) && !/pro/i.test(id);
-        return { id, label: m.displayName?.trim() || prettify(id), free, note: free ? "Capa gratuita con cuota diaria" : "Pago por uso" };
+        return { id, label: m.label?.trim() || prettify(id), free, note: free ? "Capa gratuita con cuota diaria" : "Pago por uso" };
       })
       .sort((a, b) => sortDesc(a.id, b.id));
     if (models.length === 0) throw new Error("Google no devolvió modelos de texto para esta clave.");
@@ -484,25 +542,14 @@ export async function askAi(cfg: AiConfig, system: string, user: string): Promis
   const maxTokens = 1600;
 
   if (cfg.provider === "gemini") {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model.replace(/^models\//, ""))}:generateContent?key=${encodeURIComponent(key)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: system }] },
-          contents: [{ role: "user", parts: [{ text: user }] }],
-          generationConfig: { temperature: 0.35, maxOutputTokens: maxTokens },
-        }),
-      },
-    );
-    if (!res.ok) throw new Error(httpError(res.status, await res.text()));
-    const data = await res.json();
-    const candidate = data?.candidates?.[0];
-    assertNotTruncated("Gemini", candidate?.finishReason);
-    const text = candidate?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("");
-    if (!text) throw new Error("Gemini devolvió una respuesta vacía.");
-    return text.trim();
+    if (!hasLocalAiProxy()) {
+      throw new Error("Gemini requiere abrir Noditos desde su servidor local; la clave no se expone al navegador.");
+    }
+    if (key) await configureLocalGemini(key);
+    const result = await askLocalGemini({ model, system, user, maxTokens });
+    assertNotTruncated("Gemini", result.finishReason);
+    if (!result.text) throw new Error("Gemini devolvió una respuesta vacía.");
+    return result.text.trim();
   }
 
   if (cfg.provider === "anthropic") {

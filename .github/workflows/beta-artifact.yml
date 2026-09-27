@@ -1,0 +1,46 @@
+name: Build beta artifact
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  build-beta:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.23.2
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Build unsigned Windows beta
+        run: ./build-exe.sh win
+      - name: Generate release metadata
+        run: |
+          npm sbom --sbom-format=cyclonedx > release/noditos-sbom.cdx.json
+          sha256sum release/Noditos.exe > release/SHA256SUMS.txt
+          cp THIRD_PARTY_NOTICES.md PRIVACIDAD-BETA.md TERMINOS-BETA.md SECURITY.md release/
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release/Noditos.exe
+      - uses: actions/upload-artifact@v7
+        with:
+          name: noditos-unsigned-beta-${{ github.sha }}
+          path: |
+            release/Noditos.exe
+            release/SHA256SUMS.txt
+            release/noditos-sbom.cdx.json
+            release/THIRD_PARTY_NOTICES.md
+            release/PRIVACIDAD-BETA.md
+            release/TERMINOS-BETA.md
+            release/SECURITY.md
+          if-no-files-found: error
+
+# No publica una release estable: falta certificado Authenticode e identidad legal.
